@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0F172A">
+  <title>Currency Pehchano — Nigah AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="scan-body">
+  <main class="scan-shell" id="scanShell">
+    <div class="scan-stage" id="scanStage">
+      <video id="camera" autoplay playsinline muted aria-label="Camera feed — note ko frame mein rakhein"></video>
+      <div class="camera-vignette" aria-hidden="true"></div>
+    </div>
+
+    <header class="topbar">
+      <a class="icon-btn" href="index.html" aria-label="Home par wapas jayein">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M19 12H5"></path>
+          <path d="m11 18-6-6 6-6"></path>
+        </svg>
+      </a>
+      <h1 class="topbar-title">Currency Pehchano</h1>
+      <span class="topbar-spacer" aria-hidden="true"></span>
+    </header>
+
+    <button type="button" class="scan-ring" id="scanRing" aria-label="Scan shuru karne ke liye tap karein">
+      <span class="ring-circle" aria-hidden="true">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 8h2.2l1.4-2.2A2 2 0 0 1 9.3 5h5.4a2 2 0 0 1 1.7.8L17.8 8H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z"></path>
+          <circle cx="12" cy="13" r="3.5"></circle>
+        </svg>
+      </span>
+      <span class="ring-label">Tap to Scan</span>
+    </button>
+
+    <p class="scan-hint" id="scanHint">Note ko frame mein rakhein, phir screen par tap karein</p>
+
+    <div class="camera-fallback hidden" id="cameraFallback">
+      <div class="fallback-card">
+        <h2>Camera Dastyaab Nahi Hai</h2>
+        <p>Koi baat nahi — aap note ki photo bhi upload kar ke pehchan sakte hain.</p>
+        <button type="button" class="btn btn-primary" id="uploadBtn">Photo Upload Karein</button>
+        <input type="file" id="fileInput" accept="image/*" class="hidden" tabindex="-1" aria-hidden="true">
+      </div>
+    </div>
+
+    <div class="loading-overlay hidden" id="loadingOverlay" role="status" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="loading-text">Note pehchan liya ja raha hai…</p>
+    </div>
+
+    <section class="result-card" id="resultCard" aria-live="polite">
+      <div class="result-success">
+        <div class="result-head">
+          <span class="result-icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="m8.5 12.5 2.5 2.5 4.5-5"></path>
+            </svg>
+          </span>
+          <div>
+            <h2 class="result-title">Note Pehchan Liya!</h2>
+            <p class="result-sub">Yeh aap ke note ki value hai</p>
+          </div>
+        </div>
+        <p class="result-value" id="resultValue">Rs. —</p>
+      </div>
+
+      <div class="result-failure">
+        <div class="result-head">
+          <span class="result-icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3 2.5 19.5h19L12 3z"></path>
+              <path d="M12 9.5v4.5"></path>
+              <path d="M12 17.5h.01"></path>
+            </svg>
+          </span>
+          <div>
+            <h2 class="result-title">Pehchan Nahi Ho Saki</h2>
+            <p class="result-sub">Could not identify</p>
+          </div>
+        </div>
+        <p class="result-message">Dobara koshish karein — note ko roshni mein, seedha aur frame ke beech mein rakhein.</p>
+      </div>
+
+      <div class="result-actions">
+        <button type="button" class="btn btn-primary" id="againBtn">Dobara Scan Karein</button>
+        <button type="button" class="btn btn-outline" id="homeBtn">Wapas Home</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="tts.js"></script>
+  <script>
+    (function () {
+      var API_URL = '/detect-currency';
+
+      var shell = document.getElementById('scanShell');
+      var stage = document.getElementById('scanStage');
+      var video = document.getElementById('camera');
+      var scanRing = document.getElementById('scanRing');
+      var loadingOverlay = document.getElementById('loadingOverlay');
+      var fallback = document.getElementById('cameraFallback');
+      var uploadBtn = document.getElementById('uploadBtn');
+      var fileInput = document.getElementById('fileInput');
+      var resultCard = document.getElementById('resultCard');
+      var resultValue = document.getElementById('resultValue');
+      var againBtn = document.getElementById('againBtn');
+      var homeBtn = document.getElementById('homeBtn');
+
+      var stream = null;
+      var busy = false;
+      var resultShown = false;
+
+      var INSTRUCTION_TEXT = 'Note ko camera ke samne rakhein aur screen kahin bhi tap karein';
+
+      function startCamera() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          showFallback();
+          return;
+        }
+        navigator.mediaDevices
+          .getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
+          .then(function (mediaStream) {
+            stream = mediaStream;
+            video.srcObject = mediaStream;
+          })
+          .catch(function () {
+            showFallback();
+          });
+      }
+
+      function showFallback() {
+        shell.classList.add('camera-off');
+        fallback.classList.remove('hidden');
+      }
+
+      function setLoading(value) {
+        busy = value;
+        loadingOverlay.classList.toggle('hidden', !value);
+      }
+
+      function showResult(success, denomination) {
+        resultShown = true;
+        shell.classList.add('result-open');
+        fallback.classList.add('hidden');
+        resultCard.classList.remove('is-success', 'is-failure');
+        resultCard.classList.add(success ? 'is-success' : 'is-failure');
+        if (success) {
+          resultValue.textContent = 'Rs. ' + denomination;
+          speakUrdu('Ye ' + denomination + ' rupay ka note hai');
+        } else {
+          speakUrdu('Pehchan nahi ho saki, dobara koshish karein');
+        }
+        void resultCard.offsetWidth;
+        resultCard.classList.add('show');
+      }
+
+      function hideResult() {
+        resultShown = false;
+        resultCard.classList.remove('show');
+        shell.classList.remove('result-open');
+        if (shell.classList.contains('camera-off')) {
+          fallback.classList.remove('hidden');
+        }
+      }
+
+      function sendImage(blob) {
+        if (!blob || busy || resultShown) return;
+        setLoading(true);
+        var form = new FormData();
+        form.append('image', blob, 'scan.jpg');
+        fetch(API_URL, { method: 'POST', body: form })
+          .then(function (response) {
+            return response.json().catch(function () {
+              return {};
+            });
+          })
+          .then(function (data) {
+            if (data && data.success) {
+              showResult(true, data.denomination);
+            } else {
+              showResult(false);
+            }
+          })
+          .catch(function () {
+            showResult(false);
+          })
+          .finally(function () {
+            setLoading(false);
+          });
+      }
+
+      function captureFromCamera() {
+        if (!stream || busy || resultShown || !video.videoWidth) return;
+        var canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(function (blob) {
+          sendImage(blob);
+        }, 'image/jpeg', 0.92);
+      }
+
+      stage.addEventListener('click', captureFromCamera);
+      scanRing.addEventListener('click', captureFromCamera);
+
+      uploadBtn.addEventListener('click', function () {
+        fileInput.click();
+      });
+
+      fileInput.addEventListener('change', function () {
+        if (fileInput.files && fileInput.files[0]) {
+          sendImage(fileInput.files[0]);
+          fileInput.value = '';
+        }
+      });
+
+      againBtn.addEventListener('click', hideResult);
+      homeBtn.addEventListener('click', function () {
+        window.location.href = 'index.html';
+      });
+
+      startCamera();
+      speakUrdu(INSTRUCTION_TEXT);
+    })();
+  </script>
+</body>
+</html>

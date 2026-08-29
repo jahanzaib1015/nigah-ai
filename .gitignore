@@ -1,0 +1,5 @@
+.env
+nigah.db
+__pycache__/
+*.pyc
+vibe_images/

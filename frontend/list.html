@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0F172A">
+  <title>Meri List — Nigah AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="home-body">
+  <div class="glow glow-1" aria-hidden="true"></div>
+  <div class="glow glow-2" aria-hidden="true"></div>
+
+  <main class="home-shell">
+    <header class="list-header">
+      <h1 class="list-title">Meri List</h1>
+      <p class="list-sub" id="listSub">Aap ki scanned items</p>
+    </header>
+
+    <section class="list-items" id="listItems" aria-label="Scanned items" aria-live="polite">
+      <p class="empty-state" id="emptyState" hidden>List khali hai — abhi koi scan nahi.</p>
+    </section>
+
+    <footer class="list-footer">
+      <a class="btn btn-outline" href="index.html" aria-label="Wapas Home jayein">Wapas Home</a>
+    </footer>
+  </main>
+
+  <script src="tts.js"></script>
+  <script>
+    (function () {
+      var API_URL = '/meri-list';
+
+      var listItems = document.getElementById('listItems');
+      var emptyState = document.getElementById('emptyState');
+      var listSub = document.getElementById('listSub');
+
+      var NOTE_ICON = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle><path d="M6 12h.01M18 12h.01"></path></svg>';
+      var PILL_ICON = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7z"></path><path d="m8.5 8.5 7 7"></path></svg>';
+      var TRASH_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6M14 11v6"></path></svg>';
+
+      function formatTime(timestamp) {
+        var parsed = new Date(timestamp.replace(' ', 'T'));
+        if (isNaN(parsed.getTime())) return timestamp;
+        return parsed.toLocaleString(undefined, {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit'
+        });
+      }
+
+      function badgeFor(item) {
+        if (item.status === 'expired') return { cls: 'badge-expired', label: 'Expired' };
+        if (item.status === 'safe') return { cls: 'badge-success', label: 'Safe' };
+        return { cls: 'badge-success', label: 'Success' };
+      }
+
+      function removeItem(id, card) {
+        fetch(API_URL + '/' + id, { method: 'DELETE' })
+          .then(function (response) {
+            return response.json().catch(function () { return {}; });
+          })
+          .then(function (data) {
+            if (data && data.success) {
+              card.remove();
+              var remaining = listItems.querySelectorAll('.item-card').length;
+              listSub.textContent = remaining + (remaining === 1 ? ' item' : ' items');
+              if (remaining === 0) {
+                emptyState.hidden = false;
+              }
+              speakUrdu('Item delete ho gaya');
+            }
+          });
+      }
+
+      function buildCard(item) {
+        var card = document.createElement('article');
+        card.className = 'item-card' + (item.status === 'expired' ? ' expired' : '');
+
+        var icon = document.createElement('span');
+        icon.className = 'item-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.innerHTML = item.type === 'medicine' ? PILL_ICON : NOTE_ICON;
+
+        var info = document.createElement('div');
+        info.className = 'item-info';
+        var name = document.createElement('p');
+        name.className = 'item-name';
+        name.textContent = item.name;
+        var time = document.createElement('p');
+        time.className = 'item-time';
+        time.textContent = formatTime(item.timestamp);
+        info.appendChild(name);
+        info.appendChild(time);
+
+        var badge = document.createElement('span');
+        var badgeInfo = badgeFor(item);
+        badge.className = 'badge ' + badgeInfo.cls;
+        badge.textContent = badgeInfo.label;
+
+        var del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'delete-btn';
+        del.setAttribute('aria-label', item.name + ' delete karein');
+        del.innerHTML = TRASH_ICON;
+        del.addEventListener('click', function () {
+          removeItem(item.id, card);
+        });
+
+        card.appendChild(icon);
+        card.appendChild(info);
+        card.appendChild(badge);
+        card.appendChild(del);
+        return card;
+      }
+
+      function render(items) {
+        listItems.querySelectorAll('.item-card').forEach(function (card) {
+          card.remove();
+        });
+        emptyState.hidden = items.length > 0;
+        items.forEach(function (item) {
+          listItems.appendChild(buildCard(item));
+        });
+        listSub.textContent = items.length + (items.length === 1 ? ' item' : ' items');
+        var expired = items.filter(function (item) { return item.status === 'expired'; }).length;
+        speakUrdu('Yeh aap ki Meri List hai.' + (expired > 0 ? ' ' + expired + ' item expired hai.' : ''));
+      }
+
+      fetch(API_URL)
+        .then(function (response) {
+          return response.json().catch(function () { return {}; });
+        })
+        .then(function (data) {
+          render((data && data.items) || []);
+        })
+        .catch(function () {
+          emptyState.hidden = false;
+          emptyState.textContent = 'Server se raabta nahi ho saka — dobara koshish karein.';
+          speakUrdu('Yeh aap ki Meri List hai.');
+        });
+    })();
+  </script>
+</body>
+</html>
