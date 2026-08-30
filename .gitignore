@@ -3,3 +3,4 @@ nigah.db
 __pycache__/
 *.pyc
 vibe_images/
+speech_cache/

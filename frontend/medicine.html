@@ -85,7 +85,13 @@
             <p class="result-sub">Could not identify</p>
           </div>
         </div>
-        <p class="result-message">Dobara koshish karein — dawai ka label roshni mein, seedha aur frame ke beech mein rakhein.</p>
+        <p class="result-message" id="resultMessage">Dobara koshish karein — dawai ka label roshni mein, seedha aur frame ke beech mein rakhein.</p>
+        <a class="btn btn-danger hidden" id="emergencyBtn" href="tel:03001234567" aria-label="Madad ke liye call karein — 03001234567">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+          </svg>
+          Madad Ke Liye Call Karein
+        </a>
       </div>
 
       <div class="result-actions">
@@ -110,14 +116,17 @@
       var fileInput = document.getElementById('fileInput');
       var resultCard = document.getElementById('resultCard');
       var resultValue = document.getElementById('resultValue');
+      var resultMessage = document.getElementById('resultMessage');
+      var emergencyBtn = document.getElementById('emergencyBtn');
       var againBtn = document.getElementById('againBtn');
       var homeBtn = document.getElementById('homeBtn');
 
       var stream = null;
       var busy = false;
       var resultShown = false;
+      var failCount = 0;
 
-      var INSTRUCTION_TEXT = 'Dawai ko camera ke samne rakhein aur screen kahin bhi tap karein';
+      var INSTRUCTION_TEXT = 'Aap dawai pehchanne wale screen par hain. Dawai ki strip ka wo hissa camera ke samne rakhein jahan naam aur expiry date dono likhe hon, phir screen kahin bhi tap karein.';
 
       function startCamera() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -145,17 +154,25 @@
         loadingOverlay.classList.toggle('hidden', !value);
       }
 
-      function showResult(success, name) {
+      function showResult(success, name, errorMsg) {
         resultShown = true;
         shell.classList.add('result-open');
         fallback.classList.add('hidden');
         resultCard.classList.remove('is-success', 'is-failure');
         resultCard.classList.add(success ? 'is-success' : 'is-failure');
         if (success) {
+          failCount = 0;
           resultValue.textContent = name;
-          speakUrdu('Ye ' + name + ' dawai hai');
+          queueUrdu('Ye ' + name + ' dawai hai');
         } else {
-          speakUrdu('Pehchan nahi ho saki, dobara koshish karein');
+          failCount += 1;
+          emergencyBtn.classList.toggle('hidden', failCount < 2);
+          var message = errorMsg || 'Scan kamyaab nahi hua. Dobara koshish karein.';
+          resultMessage.textContent = message;
+          queueUrdu(message);
+          if (failCount === 2) {
+            queueUrdu('Madad ke liye neeche button dabayein');
+          }
         }
         void resultCard.offsetWidth;
         resultCard.classList.add('show');
@@ -173,6 +190,7 @@
       function sendImage(blob) {
         if (!blob || busy || resultShown) return;
         setLoading(true);
+        speakUrdu('Scan ho raha hai, thora intezar karein');
         var form = new FormData();
         form.append('image', blob, 'scan.jpg');
         fetch(API_URL, { method: 'POST', body: form })
@@ -185,7 +203,7 @@
             if (data && data.success) {
               showResult(true, data.name);
             } else {
-              showResult(false);
+              showResult(false, null, data && data.error);
             }
           })
           .catch(function () {

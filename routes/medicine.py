@@ -16,11 +16,15 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 MEDICINE_PROMPT = (
-    "This is a photo of a medicine package, strip or label. "
-    "Identify the medicine's brand name and its expiry date. "
-    "Reply with ONLY two lines: "
-    "line 1 the brand name (or UNKNOWN), "
-    "line 2 the expiry date in YYYY-MM-DD format (or UNKNOWN if not visible)."
+    "Look at this image carefully. "
+    "If the image is blurry, dark, empty, or no recognizable object is visible, "
+    "reply with exactly: UNCLEAR. "
+    "If the image is clear but does NOT show a medicine strip or package "
+    "(for example a currency note, an object, a person), reply with exactly: NOT_MEDICINE. "
+    "If it IS a medicine, reply with ONLY two lines: "
+    "line 1 the brand name, "
+    "line 2 the expiry date in YYYY-MM-DD format "
+    "(or EXPIRY_NOT_VISIBLE if the expiry date is not visible or legible)."
 )
 
 medicine_bp = Blueprint("medicine", __name__)
@@ -38,11 +42,14 @@ def detect_medicine():
 
     image = request.files.get("image")
     if image is None or image.filename == "":
-        return jsonify({"success": False, "error": "No image file provided"}), 400
+        return (
+            jsonify({"success": False, "error": "Koi photo nahi mili. Dobara koshish karein."}),
+            400,
+        )
 
     image_data = image.read()
     if not image_data:
-        return jsonify({"success": False, "error": "Could not identify"})
+        return jsonify({"success": False, "error": "Scan kamyaab nahi hua. Dobara koshish karein."})
 
     try:
         model = genai.GenerativeModel("gemini-3.6-flash")
@@ -53,22 +60,58 @@ def detect_medicine():
             }
         )
         response = model.generate_content([MEDICINE_PROMPT, image_part])
+        print(f"[medicine] gemini replied: {response.text!r}", flush=True)
     except Exception as error:
-        print(f"Gemini API error: {error}")
-        return jsonify({"success": False, "error": "Could not identify"}), 500
+        print(f"Gemini API error: {error}", flush=True)
+        return (
+            jsonify({"success": False, "error": "Scan kamyaab nahi hua. Dobara koshish karein."}),
+            500,
+        )
 
     lines = [line.strip() for line in response.text.strip().splitlines() if line.strip()]
-    name = lines[0] if lines else ""
+
+    if not lines or lines[0].upper() == "UNCLEAR":
+        return jsonify(
+            {
+                "success": False,
+                "error": "Dawai ki strip frame mein sahi tarah nazar nahi aa rahi. "
+                "Dawai ko camera ke samne seedha rakhein aur dobara koshish karein.",
+            }
+        )
+
+    if lines[0].upper() == "NOT_MEDICINE":
+        return jsonify(
+            {
+                "success": False,
+                "error": "Yeh dawai nahi hai. Sirf dawai ki strip ki tasveer lein.",
+            }
+        )
+
+    name = lines[0]
     expiry_raw = lines[1] if len(lines) > 1 else "UNKNOWN"
 
-    expiry_date = None
+    if not name or name.upper() == "UNKNOWN" or len(name) > 60:
+        return jsonify({"success": False, "error": "Scan kamyaab nahi hua. Dobara koshish karein."})
+
+    if expiry_raw.upper() in ("EXPIRY_NOT_VISIBLE", "UNKNOWN"):
+        return jsonify(
+            {
+                "success": False,
+                "error": "Dawai ka naam mil gaya lekin expiry date nazar nahi aa rahi. "
+                "Expiry date wala hissa dikhayein.",
+            }
+        )
+
     try:
         expiry_date = datetime.strptime(expiry_raw, "%Y-%m-%d").date()
     except ValueError:
-        expiry_date = None
-
-    if not name or name.upper() == "UNKNOWN" or len(name) > 60:
-        return jsonify({"success": False, "error": "Could not identify"})
+        return jsonify(
+            {
+                "success": False,
+                "error": "Dawai ka naam mil gaya lekin expiry date nazar nahi aa rahi. "
+                "Expiry date wala hissa dikhayein.",
+            }
+        )
 
     status = "expired" if expiry_date and expiry_date < date.today() else "safe"
     db.add_item("medicine", name, status, expiry_date.isoformat() if expiry_date else None)

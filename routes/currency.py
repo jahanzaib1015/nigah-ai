@@ -15,9 +15,13 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 CURRENCY_PROMPT = (
-    "This is a Pakistani currency note. Identify the exact denomination "
-    "(10, 20, 50, 100, 500, 1000, or 5000 rupees). "
-    "Reply with ONLY the number, nothing else."
+    "Look at this image carefully. "
+    "If the image is blurry, dark, empty, or no recognizable object is visible, "
+    "reply with exactly: UNCLEAR. "
+    "If the image is clear but does NOT show a Pakistani currency note "
+    "(for example a medicine, an object, a person), reply with exactly: NOT_CURRENCY. "
+    "If it is a Pakistani currency note, reply with ONLY the denomination number "
+    "(10, 20, 50, 100, 500, 1000, or 5000)."
 )
 
 VALID_DENOMINATIONS = {"10", "20", "50", "100", "500", "1000", "5000"}
@@ -37,11 +41,14 @@ def detect_currency():
 
     image = request.files.get("image")
     if image is None or image.filename == "":
-        return jsonify({"success": False, "error": "No image file provided"}), 400
+        return (
+            jsonify({"success": False, "error": "Koi photo nahi mili. Dobara koshish karein."}),
+            400,
+        )
 
     image_data = image.read()
     if not image_data:
-        return jsonify({"success": False, "error": "Could not identify"})
+        return jsonify({"success": False, "error": "Scan kamyaab nahi hua. Dobara koshish karein."})
 
     try:
         model = genai.GenerativeModel("gemini-3.6-flash")
@@ -55,10 +62,30 @@ def detect_currency():
         denomination = response.text.strip()
     except Exception as error:
         print(f"Gemini API error: {error}")
-        return jsonify({"success": False, "error": "Could not identify"}), 500
+        return (
+            jsonify({"success": False, "error": "Scan kamyaab nahi hua. Dobara koshish karein."}),
+            500,
+        )
+
+    if denomination == "UNCLEAR":
+        return jsonify(
+            {
+                "success": False,
+                "error": "Currency note frame mein sahi tarah nazar nahi aa raha. "
+                "Note ko camera ke samne seedha rakhein aur dobara koshish karein.",
+            }
+        )
+
+    if denomination == "NOT_CURRENCY":
+        return jsonify(
+            {
+                "success": False,
+                "error": "Yeh currency note nahi hai. Sirf currency note ki tasveer lein.",
+            }
+        )
 
     if denomination not in VALID_DENOMINATIONS:
-        return jsonify({"success": False, "error": "Could not identify"})
+        return jsonify({"success": False, "error": "Scan kamyaab nahi hua. Dobara koshish karein."})
 
-    db.add_item("currency", f"{denomination} Rupees", "success")
+    db.add_item("currency", f"Rs. {denomination}", "success")
     return jsonify({"denomination": denomination, "success": True})

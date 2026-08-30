@@ -7,12 +7,14 @@ import db
 from routes.currency import currency_bp
 from routes.medicine import medicine_bp
 from routes.merilist import merilist_bp
+from routes.speech import speech_bp
 
 app = Flask(__name__)
 CORS(app)
 app.register_blueprint(currency_bp)
 app.register_blueprint(medicine_bp)
 app.register_blueprint(merilist_bp)
+app.register_blueprint(speech_bp)
 
 db.init_db()
 

@@ -98,10 +98,13 @@
         info.appendChild(name);
         info.appendChild(time);
 
-        var badge = document.createElement('span');
-        var badgeInfo = badgeFor(item);
-        badge.className = 'badge ' + badgeInfo.cls;
-        badge.textContent = badgeInfo.label;
+        var badge = null;
+        if (item.type === 'medicine') {
+          badge = document.createElement('span');
+          var badgeInfo = badgeFor(item);
+          badge.className = 'badge ' + badgeInfo.cls;
+          badge.textContent = badgeInfo.label;
+        }
 
         var del = document.createElement('button');
         del.type = 'button';
@@ -114,7 +117,9 @@
 
         card.appendChild(icon);
         card.appendChild(info);
-        card.appendChild(badge);
+        if (badge) {
+          card.appendChild(badge);
+        }
         card.appendChild(del);
         return card;
       }
@@ -128,9 +133,9 @@
           listItems.appendChild(buildCard(item));
         });
         listSub.textContent = items.length + (items.length === 1 ? ' item' : ' items');
-        var expired = items.filter(function (item) { return item.status === 'expired'; }).length;
-        speakUrdu('Yeh aap ki Meri List hai.' + (expired > 0 ? ' ' + expired + ' item expired hai.' : ''));
       }
+
+      speakUrdu('Aap Meri List mein hain. Yahan aapki pehle scan ki hui cheezein dikhengi.');
 
       fetch(API_URL)
         .then(function (response) {
@@ -142,7 +147,6 @@
         .catch(function () {
           emptyState.hidden = false;
           emptyState.textContent = 'Server se raabta nahi ho saka — dobara koshish karein.';
-          speakUrdu('Yeh aap ki Meri List hai.');
         });
     })();
   </script>
