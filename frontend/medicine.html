@@ -38,7 +38,7 @@
       <span class="ring-label">Tap to Scan</span>
     </button>
 
-    <p class="scan-hint" id="scanHint">Dawai ka packet frame mein rakhein, phir screen par tap karein</p>
+    <p class="scan-hint" id="scanHint">Scan Box Label or Blister Pack Back</p>
 
     <div class="camera-fallback hidden" id="cameraFallback">
       <div class="fallback-card">
@@ -69,6 +69,26 @@
           </div>
         </div>
         <p class="result-value" id="resultValue">—</p>
+        <p class="result-dates hidden" id="resultDates"></p>
+      </div>
+
+      <div class="result-expired">
+        <div class="result-head">
+          <span class="result-icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3 2.5 19.5h19L12 3z"></path>
+              <path d="M12 9.5v4.5"></path>
+              <path d="M12 17.5h.01"></path>
+            </svg>
+          </span>
+          <div>
+            <h2 class="result-title">Khatra! Expired Dawai</h2>
+            <p class="result-sub">Istemal bilkul na karein</p>
+          </div>
+        </div>
+        <p class="result-value expired-name" id="expiredName">—</p>
+        <p class="expired-warning">Yeh dawai expire ho chuki hai</p>
+        <p class="expired-date" id="expiredDate"></p>
       </div>
 
       <div class="result-failure">
@@ -95,7 +115,8 @@
       </div>
 
       <div class="result-actions">
-        <button type="button" class="btn btn-primary" id="againBtn">Dobara Scan Karein</button>
+        <button type="button" class="btn btn-primary hidden" id="labelScanBtn">Expiry Label Scan Karein</button>
+        <button type="button" class="btn btn-outline" id="againBtn">Dobara Scan Karein</button>
         <button type="button" class="btn btn-outline" id="homeBtn">Wapas Home</button>
       </div>
     </section>
@@ -110,14 +131,19 @@
       var stage = document.getElementById('scanStage');
       var video = document.getElementById('camera');
       var scanRing = document.getElementById('scanRing');
+      var scanHint = document.getElementById('scanHint');
       var loadingOverlay = document.getElementById('loadingOverlay');
       var fallback = document.getElementById('cameraFallback');
       var uploadBtn = document.getElementById('uploadBtn');
       var fileInput = document.getElementById('fileInput');
       var resultCard = document.getElementById('resultCard');
       var resultValue = document.getElementById('resultValue');
+      var resultDates = document.getElementById('resultDates');
       var resultMessage = document.getElementById('resultMessage');
+      var expiredName = document.getElementById('expiredName');
+      var expiredDate = document.getElementById('expiredDate');
       var emergencyBtn = document.getElementById('emergencyBtn');
+      var labelScanBtn = document.getElementById('labelScanBtn');
       var againBtn = document.getElementById('againBtn');
       var homeBtn = document.getElementById('homeBtn');
 
@@ -125,8 +151,19 @@
       var busy = false;
       var resultShown = false;
       var failCount = 0;
+      var scanPhase = 'medicine';
+      var pendingId = null;
+      var pendingName = null;
 
-      var INSTRUCTION_TEXT = 'Aap dawai pehchanne wale screen par hain. Dawai ki strip ka wo hissa camera ke samne rakhein jahan naam aur expiry date dono likhe hon, phir screen kahin bhi tap karein.';
+      var MEDICINE_HINT = 'Scan Box Label or Blister Pack Back';
+      var LABEL_HINT = 'Expiry wala label frame mein rakhein, phir screen par tap karein';
+
+      var INSTRUCTION_TEXT = 'دوائی اسکین کرنے کے لیے تیار ہیں۔ اگر دوائی کے باکس کا لیبل اسکین کرنا ہے تو باکس رکھیں۔ اگر صرف پتہ (بلیسٹر پیک) اسکین کرنا ہے، تو پتے کی لکھائی والی سائیڈ (بیک سائیڈ) کیمرے کے سامنے رکھیں۔';
+      var SCANNING_TEXT = 'سکین ہو رہا ہے، تھوڑا انتظار کریں۔';
+      var EXPIRED_TEXT = 'خبردار! یہ دوا ایکسپائر ہو چکی ہے۔ استعمال نہ کریں۔';
+      var STEP2_TEXT = 'اگر آپ ایکسپائری اور ایم ایف جی ڈیٹ بھی ریکارڈ میں رکھنا چاہتے ہیں، تو ایکسپائری والے لیبل کو اسکین کریں۔';
+      var LABEL_SCAN_VOICE = 'ایکسپائری والے لیبل کو کیمرے کے سامنے رکھیں اور اسکین کریں۔';
+      var DATES_RECORDED_TEXT = 'تاریخیں ریکارڈ ہو گئی ہیں۔';
 
       function startCamera() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -154,24 +191,84 @@
         loadingOverlay.classList.toggle('hidden', !value);
       }
 
-      function showResult(success, name, errorMsg) {
+      function formatDates(expiry, mfg) {
+        var parts = [];
+        if (expiry) parts.push('Expiry: ' + expiry);
+        if (mfg) parts.push('Mfg: ' + mfg);
+        return parts.join('  |  ');
+      }
+
+      function showResult(success, name, errorMsg, errorVoice, status, expiryDate) {
         resultShown = true;
         shell.classList.add('result-open');
         fallback.classList.add('hidden');
-        resultCard.classList.remove('is-success', 'is-failure');
-        resultCard.classList.add(success ? 'is-success' : 'is-failure');
-        if (success) {
+        resultCard.classList.remove('is-success', 'is-failure', 'is-expired');
+        if (success && status === 'expired') {
           failCount = 0;
+          resultCard.classList.add('is-expired');
+          expiredName.textContent = name;
+          expiredDate.textContent = expiryDate ? 'Expiry date: ' + expiryDate : '';
+          labelScanBtn.classList.remove('hidden');
+          speakUrdu(EXPIRED_TEXT);
+          if (navigator.vibrate) {
+            navigator.vibrate([200, 100, 200, 100, 200]);
+          }
+        } else if (success) {
+          failCount = 0;
+          resultCard.classList.add('is-success');
           resultValue.textContent = name;
-          queueUrdu('Ye ' + name + ' dawai hai');
+          if (expiryDate) {
+            resultDates.textContent = formatDates(expiryDate, null);
+            resultDates.classList.remove('hidden');
+          } else {
+            resultDates.classList.add('hidden');
+          }
+          labelScanBtn.classList.remove('hidden');
+          queueUrdu('یہ ' + name + ' دوائی ہے');
+          queueUrdu(STEP2_TEXT);
+          if (navigator.vibrate) {
+            navigator.vibrate(100);
+          }
         } else {
           failCount += 1;
+          resultCard.classList.add('is-failure');
+          labelScanBtn.classList.add('hidden');
           emergencyBtn.classList.toggle('hidden', failCount < 2);
           var message = errorMsg || 'Scan kamyaab nahi hua. Dobara koshish karein.';
           resultMessage.textContent = message;
-          queueUrdu(message);
+          speakUrdu(errorVoice || 'اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔');
           if (failCount === 2) {
-            queueUrdu('Madad ke liye neeche button dabayein');
+            queueUrdu('مدد کے لیے نیچے بٹن دبائیں۔');
+          }
+        }
+        void resultCard.offsetWidth;
+        resultCard.classList.add('show');
+      }
+
+      function showLabelResult(data) {
+        resultShown = true;
+        shell.classList.add('result-open');
+        fallback.classList.add('hidden');
+        labelScanBtn.classList.add('hidden');
+        resultCard.classList.remove('is-success', 'is-failure', 'is-expired');
+        if (data.status === 'expired') {
+          failCount = 0;
+          resultCard.classList.add('is-expired');
+          expiredName.textContent = pendingName || '—';
+          expiredDate.textContent = data.expiry_date ? 'Expiry date: ' + data.expiry_date : '';
+          speakUrdu(EXPIRED_TEXT);
+          if (navigator.vibrate) {
+            navigator.vibrate([200, 100, 200, 100, 200]);
+          }
+        } else {
+          failCount = 0;
+          resultCard.classList.add('is-success');
+          resultValue.textContent = pendingName || '—';
+          resultDates.textContent = formatDates(data.expiry_date, data.mfg_date);
+          resultDates.classList.remove('hidden');
+          speakUrdu(DATES_RECORDED_TEXT);
+          if (navigator.vibrate) {
+            navigator.vibrate(100);
           }
         }
         void resultCard.offsetWidth;
@@ -187,12 +284,33 @@
         }
       }
 
+      function resetToMedicinePhase(announce) {
+        scanPhase = 'medicine';
+        pendingId = null;
+        pendingName = null;
+        labelScanBtn.classList.add('hidden');
+        scanHint.textContent = MEDICINE_HINT;
+        if (announce) {
+          speakUrdu(INSTRUCTION_TEXT);
+        }
+      }
+
+      function startLabelScan() {
+        scanPhase = 'label';
+        hideResult();
+        scanHint.textContent = LABEL_HINT;
+        speakUrdu(LABEL_SCAN_VOICE);
+      }
+
       function sendImage(blob) {
         if (!blob || busy || resultShown) return;
         setLoading(true);
-        speakUrdu('Scan ho raha hai, thora intezar karein');
         var form = new FormData();
         form.append('image', blob, 'scan.jpg');
+        form.append('scan_type', scanPhase);
+        if (scanPhase === 'label' && pendingId) {
+          form.append('item_id', pendingId);
+        }
         fetch(API_URL, { method: 'POST', body: form })
           .then(function (response) {
             return response.json().catch(function () {
@@ -200,10 +318,18 @@
             });
           })
           .then(function (data) {
-            if (data && data.success) {
-              showResult(true, data.name);
+            if (scanPhase === 'label') {
+              if (data && data.success) {
+                showLabelResult(data);
+              } else {
+                showResult(false, null, data && data.error, data && data.voice);
+              }
+            } else if (data && data.success) {
+              pendingId = data.id;
+              pendingName = data.name;
+              showResult(true, data.name, null, null, data.status, data.expiry_date);
             } else {
-              showResult(false, null, data && data.error);
+              showResult(false, null, data && data.error, data && data.voice);
             }
           })
           .catch(function () {
@@ -216,6 +342,7 @@
 
       function captureFromCamera() {
         if (!stream || busy || resultShown || !video.videoWidth) return;
+        speakUrdu(SCANNING_TEXT);
         var canvas = document.createElement('canvas');
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -234,18 +361,37 @@
 
       fileInput.addEventListener('change', function () {
         if (fileInput.files && fileInput.files[0]) {
+          speakUrdu(SCANNING_TEXT);
           sendImage(fileInput.files[0]);
           fileInput.value = '';
         }
       });
 
-      againBtn.addEventListener('click', hideResult);
+      labelScanBtn.addEventListener('click', startLabelScan);
+
+      againBtn.addEventListener('click', function () {
+        var wasLabelPhase = scanPhase === 'label';
+        resetToMedicinePhase(wasLabelPhase);
+        hideResult();
+      });
+
       homeBtn.addEventListener('click', function () {
         window.location.href = 'index.html';
       });
 
       startCamera();
       speakUrdu(INSTRUCTION_TEXT);
+      preloadUrdu(SCANNING_TEXT);
+      preloadUrdu(EXPIRED_TEXT);
+      preloadUrdu(STEP2_TEXT);
+      preloadUrdu(LABEL_SCAN_VOICE);
+      preloadUrdu(DATES_RECORDED_TEXT);
+      preloadUrdu('اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔');
+      preloadUrdu('یہ دوائی نہیں ہے۔ صرف دوائی کے باکس یا پتے کی تصویر لیں۔');
+      preloadUrdu('معذرت، لکھائی پڑھ نہیں سکی۔ کرپیا چیک کریں کہ صاف سائیڈ کیمرے کے سامنے ہے یا نہیں، اور پھر سے کوشش کریں۔');
+      preloadUrdu('دوائی کا نام نہیں پڑھ سکا۔ برانڈ نیم والی سائیڈ کیمرے کے سامنے رکھیں اور دوبارہ کوشش کریں۔');
+      preloadUrdu('لیبل پر تاریخیں نہیں پڑھی جا سکیں۔ آپ دوائی کا نام دوبارہ اسکین کر سکتے ہیں یا اسکپ کر سکتے ہیں۔');
+      preloadUrdu('مدد کے لیے نیچے بٹن دبائیں۔');
     })();
   </script>
 </body>

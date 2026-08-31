@@ -77,6 +77,12 @@ button {
   background: linear-gradient(160deg, var(--color-primary) 0%, var(--color-primary-deep) 100%);
 }
 
+.home-body.list-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
 .glow {
   position: fixed;
   border-radius: 50%;
@@ -532,8 +538,14 @@ button {
   border-left-color: var(--color-warning);
 }
 
+.result-card.is-expired {
+  border-left-color: var(--color-danger);
+  background: linear-gradient(180deg, #fff7ed 0%, #fef2f2 100%);
+}
+
 .result-success,
-.result-failure {
+.result-failure,
+.result-expired {
   display: none;
 }
 
@@ -542,6 +554,10 @@ button {
 }
 
 .result-card.is-failure .result-failure {
+  display: block;
+}
+
+.result-card.is-expired .result-expired {
   display: block;
 }
 
@@ -571,6 +587,36 @@ button {
   background: rgba(245, 158, 11, 0.14);
 }
 
+.is-expired .result-icon {
+  color: var(--color-danger);
+  background: rgba(239, 68, 68, 0.14);
+}
+
+.is-expired .result-title {
+  color: var(--color-danger);
+}
+
+.result-card.is-expired .expired-name {
+  color: var(--color-danger);
+  font-weight: 800;
+}
+
+.expired-warning {
+  margin: 0 0 6px;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  text-align: center;
+  color: #b91c1c;
+}
+
+.expired-date {
+  margin: 0 0 20px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
 .result-title {
   font-family: var(--font-display);
   font-size: 1.25rem;
@@ -591,6 +637,14 @@ button {
   font-weight: 800;
   text-align: center;
   color: var(--color-primary);
+}
+
+.result-dates {
+  margin: -8px 0 20px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-align: center;
+  color: var(--color-text-muted);
 }
 
 .result-message {
@@ -803,7 +857,24 @@ button {
 }
 
 .list-footer {
-  margin-top: clamp(24px, 4vh, 36px);
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
   display: flex;
   justify-content: center;
+  padding: 20px 24px calc(18px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(2, 6, 23, 0.96) 60%, rgba(2, 6, 23, 0));
+  pointer-events: none;
+}
+
+.list-footer .btn {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 412px;
+}
+
+.home-body.list-body .home-shell {
+  padding-bottom: calc(112px + env(safe-area-inset-bottom));
 }

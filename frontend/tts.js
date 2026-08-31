@@ -2,6 +2,7 @@
   var currentAudio = null;
   var currentUrl = null;
   var queue = [];
+  var active = false;
   var lastText = null;
   var lastStarted = false;
 
@@ -24,6 +25,8 @@
   function advance() {
     if (queue.length) {
       playText(queue.shift());
+    } else {
+      active = false;
     }
   }
 
@@ -53,26 +56,24 @@
     audio.addEventListener('ended', finish);
     audio.addEventListener('error', finish);
 
-    var tryPlay = function () {
+    // Never play until the browser confirms the ENTIRE file is loaded
+    // (canplaythrough), so playback can never start clipped or cut off.
+    audio.addEventListener('canplaythrough', function () {
       if (audio.__done || currentAudio !== audio) {
         return;
       }
       audio.play().catch(finish);
-    };
-
-    // Wait until the MP3 is buffered enough to play straight through,
-    // so audio never starts clipped or stuttering.
-    if (audio.readyState >= 4) {
-      tryPlay();
-    } else {
-      audio.addEventListener('canplaythrough', tryPlay, { once: true });
-      setTimeout(tryPlay, 1500);
-    }
+    }, { once: true });
+    audio.load();
   }
 
-  function playText(text) {
-    lastText = text;
-    lastStarted = false;
+  var blobCache = {};
+
+  // Pre-generate fixed phrases at page load so they play instantly.
+  function preloadUrdu(text) {
+    if (blobCache[text]) {
+      return;
+    }
     fetch('/generate-speech', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -85,6 +86,31 @@
         return response.blob();
       })
       .then(function (blob) {
+        if (blob) {
+          blobCache[text] = blob;
+        }
+      })
+      .catch(function () {});
+  }
+
+  function playText(text) {
+    active = true;
+    lastText = text;
+    lastStarted = false;
+    var source = blobCache[text]
+      ? Promise.resolve(blobCache[text])
+      : fetch('/generate-speech', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text })
+        }).then(function (response) {
+          if (!response.ok) {
+            throw new Error('speech request failed');
+          }
+          return response.blob();
+        });
+    source
+      .then(function (blob) {
         if (lastText !== text) {
           return;
         }
@@ -96,6 +122,7 @@
   // Cancels anything playing or queued, then speaks immediately.
   function speakUrdu(text) {
     queue = [];
+    active = true;
     stopCurrent();
     playText(text);
   }
@@ -103,7 +130,7 @@
   // Speaks after whatever is playing finishes, so announcements never
   // cut each other off mid-word.
   function queueUrdu(text) {
-    if (currentAudio) {
+    if (active) {
       queue.push(text);
     } else {
       playText(text);
@@ -123,4 +150,5 @@
 
   window.speakUrdu = speakUrdu;
   window.queueUrdu = queueUrdu;
+  window.preloadUrdu = preloadUrdu;
 })();

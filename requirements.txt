@@ -3,3 +3,5 @@ python-dotenv
 flask
 flask-cors
 edge-tts
+requests
+Pillow

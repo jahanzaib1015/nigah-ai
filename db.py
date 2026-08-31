@@ -31,7 +31,7 @@ def init_db():
 
 def add_item(item_type, name, status, expiry_date=None):
     conn = get_connection()
-    conn.execute(
+    cursor = conn.execute(
         "INSERT INTO scanned_items (type, name, status, expiry_date, timestamp) "
         "VALUES (?, ?, ?, ?, ?)",
         (
@@ -41,6 +41,22 @@ def add_item(item_type, name, status, expiry_date=None):
             expiry_date,
             datetime.now().isoformat(sep=" ", timespec="seconds"),
         ),
+    )
+    conn.commit()
+    item_id = cursor.lastrowid
+    conn.close()
+    return item_id
+
+
+def update_item(item_id, **fields):
+    if not fields:
+        return
+    set_clause = ", ".join(f"{column} = ?" for column in fields)
+    values = list(fields.values()) + [item_id]
+    conn = get_connection()
+    conn.execute(
+        f"UPDATE scanned_items SET {set_clause} WHERE id = ?",
+        values,
     )
     conn.commit()
     conn.close()

@@ -78,7 +78,16 @@
 
   <script src="tts.js"></script>
   <script>
-    speakUrdu('Nigah AI mein khush amdeed. Currency pehchanne ke liye upar wala button dabayein, dawai pehchanne ke liye neeche wala button dabayein.');
+    var WELCOME_TEXT = 'نگاہ اے آئی میں خوش آمدید۔ آپ کی آنکھیں، آپ کے ساتھ۔';
+    var BUTTONS_TEXT = 'کرنسی پہچاننے کے لیے اوپر والا بٹن دبائیں، دوائی پہچاننے کے لیے نیچے والا بٹن دبائیں، اور اپنی پرانی اسکین دیکھنے کے لیے میری لسٹ کا بٹن دبائیں۔';
+    var HOME_RETURN_TEXT = 'نگاہ اے آئی کے ہوم پیج پر آ گئے ہیں۔';
+
+    if (/(scan|medicine|list)\.html/.test(document.referrer)) {
+      speakUrdu(HOME_RETURN_TEXT);
+    } else {
+      speakUrdu(WELCOME_TEXT);
+      queueUrdu(BUTTONS_TEXT);
+    }
   </script>
 </body>
 </html>

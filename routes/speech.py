@@ -1,10 +1,17 @@
 import asyncio
 import hashlib
 import os
+import sys
 import time
 
 from flask import Blueprint, jsonify, request, send_file
 import edge_tts
+
+# Windows stdout uses a legacy code page; never crash when logging Urdu text.
+try:
+    sys.stdout.reconfigure(errors="replace")
+except Exception:
+    pass
 
 VOICE = "ur-PK-AsadNeural"
 CACHE_TTL_SECONDS = 3600
@@ -34,7 +41,9 @@ def generate_speech():
     if not cached:
         try:
             print(f"[speech] generating for text={text!r}", flush=True)
-            asyncio.run(edge_tts.Communicate(text, VOICE).save(cache_path))
+            tmp_path = cache_path + ".tmp"
+            asyncio.run(edge_tts.Communicate(text, VOICE).save(tmp_path))
+            os.replace(tmp_path, cache_path)
             print(f"[speech] generated {os.path.getsize(cache_path)} bytes", flush=True)
         except Exception as error:
             print(f"edge-tts error: {error}", flush=True)
@@ -45,4 +54,6 @@ def generate_speech():
             flush=True,
         )
 
-    return send_file(cache_path, mimetype="audio/mpeg")
+    response = send_file(cache_path, mimetype="audio/mpeg")
+    response.headers["Content-Length"] = str(os.path.getsize(cache_path))
+    return response

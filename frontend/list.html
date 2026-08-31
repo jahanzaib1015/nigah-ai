@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
-<body class="home-body">
+<body class="home-body list-body">
   <div class="glow glow-1" aria-hidden="true"></div>
   <div class="glow glow-2" aria-hidden="true"></div>
 
@@ -73,7 +73,7 @@
               if (remaining === 0) {
                 emptyState.hidden = false;
               }
-              speakUrdu('Item delete ho gaya');
+              speakUrdu('آئٹم ڈیلیٹ ہو گیا۔');
             }
           });
       }
@@ -135,7 +135,7 @@
         listSub.textContent = items.length + (items.length === 1 ? ' item' : ' items');
       }
 
-      speakUrdu('Aap Meri List mein hain. Yahan aapki pehle scan ki hui cheezein dikhengi.');
+      speakUrdu('آپ میری لسٹ میں ہیں۔ یہاں آپ کی پہلے اسکین کی ہوئی چیزیں دکھیں گی۔');
 
       fetch(API_URL)
         .then(function (response) {
