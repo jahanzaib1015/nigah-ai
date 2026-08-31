@@ -5,3 +5,4 @@ flask-cors
 edge-tts
 requests
 Pillow
+gunicorn
