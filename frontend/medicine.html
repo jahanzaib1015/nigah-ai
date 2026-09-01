@@ -199,7 +199,7 @@
         return parts.join('  |  ');
       }
 
-      function showResult(success, name, errorMsg, errorVoice, status, expiryDate) {
+      function showResult(success, name, errorMsg, errorVoice, status, expiryDate, voiceName) {
         resultShown = true;
         shell.classList.add('result-open');
         fallback.classList.add('hidden');
@@ -225,7 +225,7 @@
             resultDates.classList.add('hidden');
           }
           labelScanBtn.classList.remove('hidden');
-          queueUrdu('یہ ' + name + ' دوائی ہے');
+          queueUrdu('یہ ' + (voiceName || name) + ' دوائی ہے');
           queueUrdu(STEP2_TEXT);
           if (navigator.vibrate) {
             navigator.vibrate(100);
@@ -327,7 +327,7 @@
             } else if (data && data.success) {
               pendingId = data.id;
               pendingName = data.name;
-              showResult(true, data.name, null, null, data.status, data.expiry_date);
+              showResult(true, data.name, null, null, data.status, data.expiry_date, data.voice_name);
             } else {
               showResult(false, null, data && data.error, data && data.voice);
             }

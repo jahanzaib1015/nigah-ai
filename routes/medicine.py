@@ -22,12 +22,17 @@ MEDICINE_PROMPT = (
     "(for example 'Panadol 500mg' or 'Getformin 500mg'). "
     "The brand name is MANDATORY and must be read exactly and correctly as it "
     "is printed - never guess it, and NEVER reply with only the strength such "
-    "as '500mg'. If the name is not obvious at first glance, look closer at the "
-    "branding text printed on the box or on the foil back before answering. "
+    "as '500mg'. Line 1 must ALWAYS start with the name, never with a number "
+    "or a strength, and the name must never be skipped; if no brand is "
+    "printed, use the generic / salt name printed on the pack (for example "
+    "Paracetamol, Metformin). If the name is not obvious at first glance, "
+    "look closer at the branding text printed on the box or on the foil back "
+    "before answering. "
     "If the medicine has more than one strength (for example 10mg and 1000mg), "
-    "join the strengths with the word 'plus' and spaces, like "
-    "'10mg plus 1000mg', so the text reads naturally when spoken aloud - never "
-    "use the '+' symbol. "
+    "write the strengths exactly as printed, joined with the '+' symbol, like "
+    "'10mg + 1000mg' - keep the '+' symbol in your reply. "
+    "Always write strengths with short unit symbols (mg, ml, mcg, g, IU) - "
+    "never spell out words like 'milligram' or 'milligrams'. "
     "line 2 the expiry date in YYYY-MM-DD format, but ONLY if the pack clearly "
     "labels a date as the expiry (words such as EXP, Expiry, Expiry Date, Use "
     "Before, Best Before). Never treat batch numbers, lot numbers, "
@@ -96,6 +101,13 @@ def parse_date(value):
         return None
 
 
+def voice_name(name):
+    # Display text keeps the printed '+' icon; the spoken form says "plus".
+    voice = re.sub(r"\s*\+\s*", " plus ", name)
+    voice = re.sub(r"\bmilligrams?\b", "mg", voice, flags=re.IGNORECASE)
+    return voice
+
+
 def scan_failed(status=200, error=None, voice=None):
     return (
         jsonify(
@@ -157,7 +169,6 @@ def detect_medicine():
         )
 
     name = lines[0]
-    name = re.sub(r"\s*\+\s*", " plus ", name).strip()
     if not name or name.upper() in ("UNKNOWN", "EXPIRY_NOT_VISIBLE") or len(name) > 60:
         return scan_failed()
 
@@ -182,6 +193,7 @@ def detect_medicine():
         {
             "id": item_id,
             "name": name,
+            "voice_name": voice_name(name),
             "status": status,
             "success": True,
             "expiry_date": expiry_date.isoformat() if expiry_date else None,
