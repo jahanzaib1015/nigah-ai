@@ -21,12 +21,15 @@ MEDICINE_PROMPT = (
     "line 1 the medicine brand name FIRST, followed by its strength "
     "(for example 'Panadol 500mg' or 'Getformin 500mg'). "
     "The brand name is MANDATORY and must be read exactly and correctly as it "
-    "is printed - never guess it, and NEVER reply with only the strength such "
-    "as '500mg'. Line 1 must ALWAYS start with the name, never with a number "
-    "or a strength, and the name must never be skipped; if no brand is "
-    "printed, use the generic / salt name printed on the pack (for example "
-    "Paracetamol, Metformin). If the name is not obvious at first glance, "
-    "look closer at the branding text printed on the box or on the foil back "
+    "is printed - never guess it. It is STRICTLY FORBIDDEN to leave line 1 "
+    "empty or to reply with only a strength or unit (such as '500mg', '1 g', "
+    "'10 ml') - such replies are invalid. Line 1 must ALWAYS start with the "
+    "name, never with a number or a strength, and the name must never be "
+    "skipped; if no brand is printed, use the generic / salt name printed on "
+    "the pack (for example Paracetamol, Metformin); if neither is legible, "
+    "use the most prominent printed product words on the pack as the name - "
+    "never a bare strength. If the name is not obvious at first glance, look "
+    "closer at the branding text printed on the box or on the foil back "
     "before answering. "
     "If the medicine has more than one strength (for example 10mg and 1000mg), "
     "write the strengths exactly as printed, joined with the '+' symbol, like "
@@ -108,6 +111,29 @@ def voice_name(name):
     return voice
 
 
+_NAME_SENTINELS = {"", "UNKNOWN", "EXPIRY_NOT_VISIBLE", "N/A", "NA", "NONE", "-"}
+_LEADING_STRENGTH_RE = re.compile(
+    rf"^({_STRENGTH_TOKEN}(?:\s*(?:\+|plus|&|,)\s*{_STRENGTH_TOKEN})*)"
+    rf"(?!\s*(?:\+|plus|&|,)\s*{_STRENGTH_TOKEN})\s+(.+)$",
+    re.IGNORECASE,
+)
+
+
+def clean_name(raw):
+    # Final parsing guard: returns a display-safe name, or None when the
+    # model failed to provide one (empty, sentinel, or strength-only).
+    name = (raw or "").strip().strip("'\"*`").strip()
+    if not name or len(name) > 60 or name.upper() in _NAME_SENTINELS:
+        return None
+    # "500mg Panadol" -> "Panadol 500mg": the name must precede the strength.
+    flipped = _LEADING_STRENGTH_RE.match(name)
+    if flipped:
+        name = f"{flipped.group(2).strip()} {flipped.group(1)}"
+    if STRENGTH_ONLY_RE.match(name):
+        return None
+    return name
+
+
 def scan_failed(status=200, error=None, voice=None):
     return (
         jsonify(
@@ -168,12 +194,12 @@ def detect_medicine():
             "یہ دوائی نہیں ہے۔ صرف دوائی کے باکس یا پتے کی تصویر لیں۔",
         )
 
-    name = lines[0]
-    if not name or name.upper() in ("UNKNOWN", "EXPIRY_NOT_VISIBLE") or len(name) > 60:
+    name = clean_name(lines[0])
+    if name is None:
+        stripped = (lines[0] or "").strip()
+        if stripped and STRENGTH_ONLY_RE.match(stripped):
+            return scan_failed(200, NAME_MISSING_ERROR, NAME_MISSING_VOICE)
         return scan_failed()
-
-    if STRENGTH_ONLY_RE.match(name):
-        return scan_failed(200, NAME_MISSING_ERROR, NAME_MISSING_VOICE)
 
     expiry_raw = lines[1] if len(lines) > 1 else "EXPIRY_NOT_VISIBLE"
     expiry_date = (
