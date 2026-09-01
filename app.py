@@ -16,7 +16,10 @@ app.register_blueprint(medicine_bp)
 app.register_blueprint(merilist_bp)
 app.register_blueprint(speech_bp)
 
-db.init_db()
+try:
+    db.init_db()
+except Exception as error:
+    print(f"[startup] database initialization failed: {error}", flush=True)
 
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
 
@@ -37,5 +40,6 @@ def frontend_files(filename):
 
 
 if __name__ == "__main__":
+    APP_MODE = (os.environ.get("APP_MODE") or "development").strip().lower()
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=(APP_MODE != "production"))
