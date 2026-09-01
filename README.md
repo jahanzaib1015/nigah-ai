@@ -4,8 +4,6 @@
 
 An AI-powered mobile-first web application designed to empower visually impaired individuals in Pakistan by providing real-time **medicine identification**, **currency detection**, and **expiry tracking** — all delivered through natural Urdu voice feedback.
 
-> **Note:** Nigah AI is not the first accessibility app globally. Established solutions like Microsoft Seeing AI, Google Lookout, and Be My Eyes already exist. Nigah AI differentiates itself through its **Urdu-first design**, **Pakistani currency focus**, and **robust medicine expiry tracking** — features specifically tailored for the Pakistani visually impaired community.
-
 ---
 
 **Live Demo:** [https://nigah-ai-production.up.railway.app/](https://nigah-ai-production.up.railway.app/)
