@@ -12,15 +12,23 @@ load_dotenv(ROOT / ".env")
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from routes.medicine import STRENGTH_ONLY_RE, clean_name, voice_name
+from routes.medicine import (
+    STRENGTH_ONLY_RE,
+    _is_strength_only,
+    clean_name,
+    voice_name,
+)
 
 VALID = {
+    "Panadol": "Panadol",
     "Panadol 500mg": "Panadol 500mg",
     "Getformin 2mg + 500mg": "Getformin 2mg + 500mg",
     "500mg Panadol": "Panadol 500mg",
     "10mg + 1000mg Getformin": "Getformin 10mg + 1000mg",
+    "125mg/5ml Calpol": "Calpol 125mg/5ml",
     "  'Panadol 500mg'  ": "Panadol 500mg",
     "پانڈول 500mg": "پانڈول 500mg",
+    "پانڈول 500": "پانڈول 500",
     "Amoxicillin 250mg": "Amoxicillin 250mg",
 }
 
@@ -34,6 +42,15 @@ REJECTED = [
     "250mcg",
     "10mg + 1000mg",
     "250mg + 500mg + 10mg",
+    "0.5 g + 250 mg",
+    "125mg/5ml",
+    "10ml/5ml",
+    "500 milligram",
+    "250 milligrams",
+    "500",
+    "500 + 250",
+    "500/250",
+    "+",
     "UNKNOWN",
     "EXPIRY_NOT_VISIBLE",
     "None",
@@ -54,7 +71,14 @@ def main():
         print(f"reject  {src!r}")
 
     assert STRENGTH_ONLY_RE.match("500 mg")
+    assert STRENGTH_ONLY_RE.match("125mg/5ml")
     assert not STRENGTH_ONLY_RE.match("Panadol 500mg")
+    assert _is_strength_only("500")
+    assert _is_strength_only("500mg")
+    assert _is_strength_only("500 + 250")
+    assert _is_strength_only("125mg/5ml")
+    assert not _is_strength_only("Panadol")
+    assert not _is_strength_only("پانڈول")
     assert voice_name("Getformin 2mg + 500mg") == "Getformin 2mg plus 500mg"
     assert voice_name("Panadol 500 milligram") == "Panadol 500 mg"
     print("guard + voice_name OK")
