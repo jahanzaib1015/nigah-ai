@@ -10,7 +10,7 @@ IMAGE_PROMPT = (
 
 
 def main():
-    load_dotenv()
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:

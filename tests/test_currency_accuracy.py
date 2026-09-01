@@ -6,7 +6,7 @@ import urllib.request
 from pathlib import Path
 
 ENDPOINT = "http://127.0.0.1:5000/detect-currency"
-FOLDER = Path(__file__).parent / "currency_PKR"
+FOLDER = Path(__file__).resolve().parent.parent / "currency_PKR"
 PACING_SECONDS = 3.5
 MAX_RETRIES = 4
 

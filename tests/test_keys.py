@@ -6,7 +6,7 @@ from google.ai import generativelanguage_v1beta as gl
 from google.api_core import client_options as client_options_lib
 
 sys.stdout.reconfigure(errors="replace")
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
 
 PRIMARY = (os.getenv("GEMINI_API_KEY_PRIMARY") or "").strip()
 BACKUP = (os.getenv("GEMINI_API_KEY_BACKUP") or "").strip()

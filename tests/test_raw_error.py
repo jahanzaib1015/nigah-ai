@@ -7,7 +7,7 @@ import google.generativeai as genai
 
 sys.stdout.reconfigure(errors="replace")
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
 
 api_key = os.getenv("GEMINI_API_KEY")
 print("GEMINI_API_KEY present:", bool(api_key))
