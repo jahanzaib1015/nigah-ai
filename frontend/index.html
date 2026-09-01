@@ -65,7 +65,7 @@
       </a>
     </section>
 
-    <footer class="home-footer">
+    <footer class="home-footer home-footer-care">
       <a class="meri-list" href="list.html" aria-label="Meri List — apni scanned items dekhein">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M8 6h13M8 12h13M8 18h13"></path>
@@ -73,13 +73,20 @@
         </svg>
         Meri List
       </a>
+      <button type="button" class="care-open-pill" data-care-open aria-label="Customer Care — madad ke liye rabta karein">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"></path>
+        </svg>
+        Customer Care
+      </button>
     </footer>
   </main>
 
   <script src="tts.js"></script>
+  <script src="care.js"></script>
   <script>
     var WELCOME_TEXT = 'نگاہ اے آئی میں خوش آمدید۔ آپ کی آنکھیں، آپ کے ساتھ۔';
-    var BUTTONS_TEXT = 'کرنسی پہچاننے کے لیے اوپر والا بٹن دبائیں، دوائی پہچاننے کے لیے نیچے والا بٹن دبائیں، اور اپنی پرانی اسکین دیکھنے کے لیے میری لسٹ کا بٹن دبائیں۔';
+    var BUTTONS_TEXT = 'کرنسی پہچاننے کے لیے اوپر والا بٹن دبائیں، دوائی پہچاننے کے لیے نیچے والا بٹن دبائیں، اپنی پرانی اسکین دیکھنے کے لیے میری لسٹ کا بٹن دبائیں، اور مدد کے لیے کسٹمر کیئر کا بٹن دبائیں۔';
     var HOME_RETURN_TEXT = 'نگاہ اے آئی کے ہوم پیج پر آ گئے ہیں۔';
 
     if (/(scan|medicine|list)\.html/.test(document.referrer)) {

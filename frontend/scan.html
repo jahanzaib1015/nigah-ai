@@ -25,7 +25,11 @@
         </svg>
       </a>
       <h1 class="topbar-title">Currency Pehchano</h1>
-      <span class="topbar-spacer" aria-hidden="true"></span>
+      <button type="button" class="icon-btn care-btn" data-care-open aria-label="Customer Care — madad ke liye rabta karein">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"></path>
+        </svg>
+      </button>
     </header>
 
     <button type="button" class="scan-ring" id="scanRing" aria-label="Scan shuru karne ke liye tap karein">
@@ -86,12 +90,6 @@
           </div>
         </div>
         <p class="result-message" id="resultMessage">Dobara koshish karein — note ko roshni mein, seedha aur frame ke beech mein rakhein.</p>
-        <a class="btn btn-danger hidden" id="emergencyBtn" href="tel:03001234567" aria-label="Madad ke liye call karein — 03001234567">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
-          </svg>
-          Madad Ke Liye Call Karein
-        </a>
       </div>
 
       <div class="result-actions">
@@ -102,6 +100,7 @@
   </main>
 
   <script src="tts.js"></script>
+  <script src="care.js"></script>
   <script>
     (function () {
       var API_URL = '/detect-currency';
@@ -117,7 +116,6 @@
       var resultCard = document.getElementById('resultCard');
       var resultValue = document.getElementById('resultValue');
       var resultMessage = document.getElementById('resultMessage');
-      var emergencyBtn = document.getElementById('emergencyBtn');
       var againBtn = document.getElementById('againBtn');
       var homeBtn = document.getElementById('homeBtn');
 
@@ -185,12 +183,11 @@
           queueUrdu(currencyVoice(currency, denomination));
         } else {
           failCount += 1;
-          emergencyBtn.classList.toggle('hidden', failCount < 2);
           var message = errorMsg || 'Scan kamyaab nahi hua. Dobara koshish karein.';
           resultMessage.textContent = message;
           speakUrdu(errorVoice || 'اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔');
           if (failCount === 2) {
-            queueUrdu('مدد کے لیے نیچے بٹن دبائیں۔');
+            queueUrdu('مدد کے لیے اوپر کسٹمر کیئر بٹن دبائیں۔');
           }
         }
         void resultCard.offsetWidth;
@@ -270,7 +267,7 @@
       preloadUrdu('اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔');
       preloadUrdu('یہ کرنسی نوٹ نہیں ہے۔ صرف کرنسی نوٹ کی تصویر لیں۔');
       preloadUrdu('کرنسی نوٹ فریم میں صحیح طریقے سے نظر نہیں آ رہا۔ نوٹ کو کیمرے کے سامنے سیدھا رکھیں اور دوبارہ کوشش کریں۔');
-      preloadUrdu('مدد کے لیے نیچے بٹن دبائیں۔');
+      preloadUrdu('مدد کے لیے اوپر کسٹمر کیئر بٹن دبائیں۔');
     })();
   </script>
 </body>

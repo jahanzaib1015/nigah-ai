@@ -57,7 +57,7 @@
       function badgeFor(item) {
         if (item.status === 'expired') return { cls: 'badge-expired', label: 'Expired' };
         if (item.status === 'safe') return { cls: 'badge-success', label: 'Safe' };
-        return { cls: 'badge-success', label: 'Success' };
+        return { cls: 'badge-neutral', label: 'No Expiry' };
       }
 
       function removeItem(id, card) {
