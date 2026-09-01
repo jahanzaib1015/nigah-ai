@@ -137,6 +137,21 @@
     }
   }
 
+  // Global cleaner: stops playback mid-sentence, drops the whole queue,
+  // and nulls lastText so a gesture-blocked announcement can never be
+  // replayed later into an unrelated context.
+  function stopAllAudio() {
+    queue = [];
+    active = false;
+    lastText = null;
+    stopCurrent();
+    if (window.speechSynthesis && typeof window.speechSynthesis.cancel === 'function') {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (err) {}
+    }
+  }
+
   // Browsers block audio before any user gesture; replay the last
   // announcement on first interaction if it never started.
   function retryIfBlocked() {
@@ -148,7 +163,23 @@
   document.addEventListener('pointerdown', retryIfBlocked);
   document.addEventListener('keydown', retryIfBlocked);
 
+  // Silence audio the moment any navigation starts: anchor clicks (captured
+  // before the page handler runs), plus pagehide/beforeunload for back/forward
+  // and programmatic location.href changes, so prompts never spill across pages.
+  document.addEventListener('click', function (event) {
+    var target = event.target;
+    if (target && target.closest) {
+      var link = target.closest('a[href]');
+      if (link && (link.getAttribute('href') || '').charAt(0) !== '#') {
+        stopAllAudio();
+      }
+    }
+  }, true);
+  window.addEventListener('pagehide', stopAllAudio);
+  window.addEventListener('beforeunload', stopAllAudio);
+
   window.speakUrdu = speakUrdu;
   window.queueUrdu = queueUrdu;
   window.preloadUrdu = preloadUrdu;
+  window.stopAllAudio = stopAllAudio;
 })();

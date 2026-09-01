@@ -42,6 +42,9 @@
 
   function closeSheet() {
     sheet.classList.add('hidden');
+    if (window.stopAllAudio) {
+      window.stopAllAudio();
+    }
     if (lastTrigger) {
       lastTrigger.focus();
       lastTrigger = null;

@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 </head>
 <body class="scan-body">
   <main class="scan-shell" id="scanShell">
@@ -101,6 +103,7 @@
 
   <script src="tts.js"></script>
   <script src="care.js"></script>
+  <script src="pwa.js"></script>
   <script>
     (function () {
       var API_URL = '/detect-currency';
@@ -195,6 +198,9 @@
       }
 
       function hideResult() {
+        if (window.stopAllAudio) {
+          window.stopAllAudio();
+        }
         resultShown = false;
         resultCard.classList.remove('show');
         shell.classList.remove('result-open');
@@ -258,6 +264,9 @@
 
       againBtn.addEventListener('click', hideResult);
       homeBtn.addEventListener('click', function () {
+        if (window.stopAllAudio) {
+          window.stopAllAudio();
+        }
         window.location.href = 'index.html';
       });
 

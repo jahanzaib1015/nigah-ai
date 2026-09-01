@@ -9,7 +9,9 @@ from routes.medicine import medicine_bp
 from routes.merilist import merilist_bp
 from routes.speech import speech_bp
 
-app = Flask(__name__)
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+
+app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="/static")
 CORS(app)
 app.register_blueprint(currency_bp)
 app.register_blueprint(medicine_bp)
@@ -20,8 +22,6 @@ try:
     db.init_db()
 except Exception as error:
     print(f"[startup] database initialization failed: {error}", flush=True)
-
-FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
 
 
 @app.route("/")

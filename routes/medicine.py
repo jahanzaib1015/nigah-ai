@@ -10,7 +10,9 @@ MEDICINE_PROMPT = (
     "You are an expert on medicine packaging. The image may show a medicine BOX "
     "(carton label) or a BLISTER PACK (patta). For blister packs the text is "
     "usually printed on the back side (the silver foil side) - read whatever "
-    "printed text is visible carefully. "
+    "printed text is visible carefully. Packaging often mixes English with Urdu "
+    "or other regional scripts - read every script that is present; the brand "
+    "name itself may be printed in English, in Urdu, or in both. "
     "If the image is blurry, dark, empty, or the printed text cannot be read, "
     "reply with exactly: UNCLEAR. "
     "If the image is clear but does NOT show a medicine box or blister pack "
@@ -18,17 +20,30 @@ MEDICINE_PROMPT = (
     "If it IS a medicine box or blister pack, reply with ONLY two lines: "
     "line 1 the medicine brand name FIRST, followed by its strength "
     "(for example 'Panadol 500mg' or 'Getformin 500mg'). "
-    "The brand name is MANDATORY: NEVER reply with only the strength such as "
-    "'500mg'. If the name is not obvious at first glance, look closer at the "
+    "The brand name is MANDATORY and must be read exactly and correctly as it "
+    "is printed - never guess it, and NEVER reply with only the strength such "
+    "as '500mg'. If the name is not obvious at first glance, look closer at the "
     "branding text printed on the box or on the foil back before answering. "
-    "line 2 the expiry date in YYYY-MM-DD format "
-    "(or EXPIRY_NOT_VISIBLE if the expiry date is not visible or legible)."
+    "If the medicine has more than one strength (for example 10mg and 1000mg), "
+    "join the strengths with the word 'plus' and spaces, like "
+    "'10mg plus 1000mg', so the text reads naturally when spoken aloud - never "
+    "use the '+' symbol. "
+    "line 2 the expiry date in YYYY-MM-DD format, but ONLY if the pack clearly "
+    "labels a date as the expiry (words such as EXP, Expiry, Expiry Date, Use "
+    "Before, Best Before). Never treat batch numbers, lot numbers, "
+    "manufacturing dates, prices, or unlabeled digits as an expiry date. If no "
+    "clearly labeled expiry date is visible, reply EXPIRY_NOT_VISIBLE."
 )
 
 LABEL_PROMPT = (
     "You are reading a close-up photo of a medicine expiry label "
     "(from a medicine box or from the foil side of a blister pack). "
-    "Look for the expiry date and the manufacturing date. "
+    "The label may mix English with Urdu or other regional scripts - read "
+    "every script that is present. Look for the expiry date and the "
+    "manufacturing date. Only read a date as the expiry date if it is clearly "
+    "labeled as such (words such as EXP, Expiry, Expiry Date, Use Before, Best "
+    "Before); never mistake a batch number, lot number, or manufacturing date "
+    "for the expiry date. "
     "If the image is blank, blurry, dark, or shows no readable dates or text, "
     "reply with exactly: NO_DATES. "
     "Otherwise reply with ONLY two lines: "
@@ -56,8 +71,10 @@ NO_DATES_VOICE = (
     "سکتے ہیں یا اسکپ کر سکتے ہیں۔"
 )
 
+_STRENGTH_TOKEN = r"\d+(?:\.\d+)?\s*(?:mg|ml|mcg|ug|µg|g|iu)"
 STRENGTH_ONLY_RE = re.compile(
-    r"^\d+(?:\.\d+)?\s*(?:mg|ml|mcg|ug|µg|g|iu)$", re.IGNORECASE
+    rf"^{_STRENGTH_TOKEN}(?:\s*(?:\+|plus|&|,)\s*{_STRENGTH_TOKEN})*$",
+    re.IGNORECASE,
 )
 
 NAME_MISSING_ERROR = (
@@ -140,6 +157,7 @@ def detect_medicine():
         )
 
     name = lines[0]
+    name = re.sub(r"\s*\+\s*", " plus ", name).strip()
     if not name or name.upper() in ("UNKNOWN", "EXPIRY_NOT_VISIBLE") or len(name) > 60:
         return scan_failed()
 
