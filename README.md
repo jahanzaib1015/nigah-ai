@@ -106,7 +106,7 @@ This focused approach makes Nigah AI uniquely suited for the **Pakistani visuall
 |------|------|-------------------|
 | **Muhammad Jahanzaib Azhar** | AI Developer | Core system architecture, backend logic, Flask API, Gemini integration, medicine parser hardening, TTS optimization, deployment |
 | **Javeria Waqar** | AI Dev Support | AI pipeline assistance, feature refinement, technical support, testing coordination |
-| **Syed Izhar Uddin** | Data Collection & Testing | Dataset compilation, creation of 21 medicine parsing unit tests, quality assurance, currency image dataset (67 images) |
+| **Syed Izhar Uddin** | Data Collection & Testing | Dataset compilation, creation of 35 medicine parsing unit tests, quality assurance, currency image dataset (67 images) |
 | **Hudabia Aimen** | Pitch, Docs & Presentation | Project documentation, pitch deck formulation, presentation asset management |
 
 ---
@@ -178,14 +178,14 @@ The medicine scanning module is fortified at **three layers** to guarantee relia
 
 ### Layer 2: Strict Parsing Guard (`clean_name()` in `routes/medicine.py`)
 - Strips whitespace, quotes, and markdown artifacts.
-- Rejects empty, >60-char, and sentinel replies (`UNKNOWN`, `N/A`, `NA`, `None`, `EXPIRY_NOT_VISIBLE`, `-`).
+- Rejects empty, >80-char, and sentinel replies (`UNKNOWN`, `N/A`, `NA`, `None`, `EXPIRY_NOT_VISIBLE`, `-`).
 - **`STRENGTH_ONLY_RE`** rejects bare and compound strengths (e.g., `500mg`, `1 g`, `10 ml`, `250mcg`, `10mg + 1000mg`).
 - **Leading-strength reordering** repairs inverted replies: `500mg Panadol` -> `Panadol 500mg` (guarded by negative lookahead to avoid splitting compound strengths).
 - On rejection, strength-only replies trigger a dedicated Urdu "name not readable — rescan" voice; other invalid replies get generic failure voice. The name is **never** silently degraded.
 
-### Layer 3: Unit Tests (21 Cases)
-- **7 accepted** — plain brand, compound `+`, inverted, quoted/padded, Urdu-script brand, generic name.
-- **14 rejected** — empty, whitespace, every unit form, compound strengths, sentinels, oversized.
+### Layer 3: Unit Tests (35 Cases)
+- **12 accepted** — plain brand, brand-only, compound `+`, slash concentration, inverted, quoted/padded, Urdu-script brand, Urdu + plain number, long multi-word names.
+- **23 rejected** — empty, whitespace, every unit form, compound strengths, slash concentrations, spelled-out units, bare numbers, symbol junk, sentinels, oversized (>80 chars).
 - All tests passing, committed to repository.
 
 ---
@@ -256,8 +256,8 @@ The medicine scanning module is fortified at **three layers** to guarantee relia
 ```bash
 python tests/test_medicine_name_parsing.py
 ```
-- **21 test cases** (7 accepted + 14 rejected).
-- Covers edge cases: compound strengths, Urdu script, sentinels, whitespace, inverted strings.
+- **35 test cases** (12 accepted + 23 rejected).
+- Covers edge cases: compound strengths, slash concentrations, spelled-out units, bare numbers, Urdu script, sentinels, whitespace, inverted strings, and over-length names.
 - **Status:** All passing.
 
 ### Currency Accuracy Benchmark
@@ -340,7 +340,7 @@ nigah-ai/
 │   ├── currency.py             # POST /detect-currency — denomination + currency
 │   ├── medicine.py             # POST /detect-medicine — clean_name() guards,
 │   │                           #   expiry parsing, label-scan merge, voice_name
-│   ├── merilist.py             # GET /meri-list · DELETE /meri-list/
+│   ├── merilist.py             # GET /meri-list · DELETE /meri-list/<id>
 │   └── speech.py               # POST /generate-speech — Edge-TTS MP3 + caching
 |
 ├── frontend/
@@ -361,7 +361,7 @@ nigah-ai/
 │   └── rasterize_icons.py      # SVG -> PNG icon generator (dev tool)
 |
 ├── tests/
-│   ├── test_medicine_name_parsing.py   # Unit tests: 7 accept + 14 reject
+│   ├── test_medicine_name_parsing.py   # Unit tests: 12 accept + 23 reject
 │   │                                   #   cases for the name-extraction guards
 │   ├── test_currency_accuracy.py       # Accuracy benchmark vs. currency_PKR/
 │   ├── test_api.py             # Gemini API smoke test
@@ -373,7 +373,7 @@ nigah-ai/
 │   └── test_black.png          # Blank/black-image edge case
 |
 ├── currency_PKR/               # 67 real Pakistani note photos,
-│   │                           #   named note__.jpg
+│   │                           #   named note_<denomination>_<n>.jpg
 │   ├── note_10_1..9.jpg        #   10 rupees   × 9
 │   ├── note_20_1..9.jpg        #   20 rupees   × 9
 │   ├── note_50_1..7.jpg        #   50 rupees   × 7
@@ -394,13 +394,29 @@ nigah-ai/
 
 ## Environment Variables
 
-Create a `.env` file from `.env.example` and fill in the required keys:
+Create a `.env` file in the project root (`.env.example` is provided as a template). The required keys depend on the run mode:
+
+**Production mode (Google Gemini endpoint):**
 
 ```
+APP_MODE=production
 GEMINI_API_KEY=your_google_gemini_api_key
-FLASK_SECRET_KEY=your_secret_key
-# Optional: database path, TTS cache settings, etc.
 ```
+
+**Development mode (default, alternate vision endpoint):**
+
+```
+TABI_API_KEY=your_dev_key_here
+TABI_BASE_URL=https://your-dev-endpoint
+```
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `GEMINI_API_KEY` | Production | Google Gemini Vision API key; startup fails without it when `APP_MODE=production` |
+| `TABI_API_KEY` | Development | Development endpoint key; required when `APP_MODE` is unset or `development` |
+| `TABI_BASE_URL` | Development | Base URL of the development vision endpoint |
+| `APP_MODE` | Optional | `production` or `development` (default) — selects the vision endpoint and toggles Flask debug auto-reload |
+| `PORT` | Optional | Server port; defaults to `5000` locally and is injected automatically by Railway in production |
 
 > **Note:** The `.env.example` file is maintained as a template; actual secrets are never committed to the repository.
 
@@ -412,7 +428,7 @@ FLASK_SECRET_KEY=your_secret_key
 - All five core features (medicine, currency, history, alerts, customer care)
 - PWA support with custom branding
 - Global audio interruption control
-- Unit tests for medicine parsing (21 cases)
+- Unit tests for medicine parsing (35 cases)
 - Live deployment on Railway
 
 ### In Progress / Upcoming
