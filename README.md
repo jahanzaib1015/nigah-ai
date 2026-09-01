@@ -8,8 +8,6 @@ An AI-powered mobile-first web application designed to empower visually impaired
 
 **Live Demo:** [https://nigah-ai-production.up.railway.app/](https://nigah-ai-production.up.railway.app/)
 
-**Repository:** [https://github.com/jahanzaib1015/nigah-ai](https://github.com/jahanzaib1015/nigah-ai)
-
 ---
 
 ## Table of Contents
