@@ -14,24 +14,35 @@ MEDICINE_PROMPT = (
     "or other regional scripts - read every script that is present; the brand "
     "name itself may be printed in English, in Urdu, or in both. "
     "If the image is blurry, dark, empty, or the printed text cannot be read, "
-    "reply with exactly: UNCLEAR. "
+    "reply with exactly: UNCLEAR - but ONLY as a last resort, when truly "
+    "nothing is readable: faint, stylized, or decorative brand text still "
+    "counts if you can make out the letters. "
     "If the image is clear but does NOT show a medicine box or blister pack "
     "(for example a currency note, an object, a person), reply with exactly: NOT_MEDICINE. "
     "If it IS a medicine box or blister pack, reply with ONLY two lines: "
     "line 1 the medicine brand name FIRST, followed by its strength "
     "(for example 'Panadol 500mg' or 'Getformin 500mg'). "
     "The brand name is MANDATORY and must be read exactly and correctly as it "
-    "is printed - never guess it. It is STRICTLY FORBIDDEN to leave line 1 "
+    "is printed - never guess it, but search hard for it: the name may be in "
+    "a stylized, decorative, or unusual font, may be faint or partially "
+    "shadowed, and may sit among crowded marketing text, dosage charts, and "
+    "regulatory markings. Scan the WHOLE pack (front, edges, and blister "
+    "foil) and pick the most prominent pharmaceutical word - usually the "
+    "largest product word, the word printed next to the strength, or the word "
+    "repeated along the blister foil. It is STRICTLY FORBIDDEN to leave line 1 "
     "empty or to reply with only a strength, unit, or number (such as '500mg', "
     "'1 g', '10 ml', '125mg/5ml', or '500') - such replies are invalid. Line 1 "
     "must ALWAYS be the brand or generic name (optionally followed by its "
     "strength), never with a number or a strength first, and the name must "
-    "never be skipped; if no brand is printed, use the generic / salt name "
-    "printed on the pack (for example Paracetamol, Metformin); if neither is "
-    "legible, use the most prominent printed product words on the pack as the "
-    "name - never a bare strength or number. If the name is not obvious at "
-    "first glance, look closer at the branding text printed on the box or on "
-    "the foil back before answering. "
+    "never be skipped; if no brand is printed, use the main salt / generic "
+    "name printed on the pack (for example Paracetamol, Metformin); if "
+    "neither is legible, use the most prominent printed product words on the "
+    "pack as the name - never a bare strength or number. Keep multi-word "
+    "brand names together exactly as printed (for example 'Co-Amoxiclav "
+    "625mg'); do not let marketing subtitles or taglines make you drop the "
+    "name - read the brand, not the tagline. Keep line 1 concise: the brand "
+    "or salt name plus strength only, without extra words like Tablet, "
+    "Capsule, or Syrup unless they are part of the printed name itself. "
     "If the medicine has more than one strength (for example 10mg and 1000mg), "
     "write the strengths exactly as printed, joined with the '+' symbol, like "
     "'10mg + 1000mg' - keep the '+' symbol in your reply. "
@@ -142,7 +153,7 @@ def clean_name(raw):
     # model failed to provide one (empty, sentinel, strength-only, or a
     # bare number/symbol string with no letters).
     name = (raw or "").strip().strip("'\"*`").strip()
-    if not name or len(name) > 60 or name.upper() in _NAME_SENTINELS:
+    if not name or len(name) > 80 or name.upper() in _NAME_SENTINELS:
         return None
     # "500mg Panadol" -> "Panadol 500mg": the name must precede the strength.
     flipped = _LEADING_STRENGTH_RE.match(name)

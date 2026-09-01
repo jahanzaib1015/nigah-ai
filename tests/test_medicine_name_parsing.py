@@ -26,6 +26,10 @@ VALID = {
     "500mg Panadol": "Panadol 500mg",
     "10mg + 1000mg Getformin": "Getformin 10mg + 1000mg",
     "125mg/5ml Calpol": "Calpol 125mg/5ml",
+    "Co-Amoxiclav 625mg": "Co-Amoxiclav 625mg",
+    "Paracetamol Compound Extra Strength Film Coated Tablets 500mg": (
+        "Paracetamol Compound Extra Strength Film Coated Tablets 500mg"
+    ),
     "  'Panadol 500mg'  ": "Panadol 500mg",
     "پانڈول 500mg": "پانڈول 500mg",
     "پانڈول 500": "پانڈول 500",
@@ -55,7 +59,7 @@ REJECTED = [
     "EXPIRY_NOT_VISIBLE",
     "None",
     "N/A",
-    "x" * 61,
+    "x" * 81,
 ]
 
 
