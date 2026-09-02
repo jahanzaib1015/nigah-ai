@@ -18,6 +18,11 @@ TABI_MODEL = "claude-opus-4-8"
 GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
 GEMINI_MODEL = "gemini-3.6-flash"
 
+# Google's latency swings from a few seconds to several minutes. Give up just
+# before gunicorn's --timeout 200 kills the worker, so the caller still returns
+# the spoken service-unavailable message instead of a bare HTML 500.
+_GOOGLE_TIMEOUT_SECONDS = 180
+
 # railway.json cannot set environment variables, so APP_MODE is easy to leave
 # out of the dashboard. Silently serving live traffic from the rate-limited dev
 # proxy looks exactly like a detection bug, so a Railway runtime always means
@@ -122,7 +127,7 @@ def _generate_google(prompt, image_data, mime_type):
         model=f"models/{GEMINI_MODEL}",
         contents=[gl.Content(parts=parts)],
     )
-    response = _google_client.generate_content(request)
+    response = _google_client.generate_content(request, timeout=_GOOGLE_TIMEOUT_SECONDS)
     return "".join(
         part.text
         for candidate in response.candidates
