@@ -151,6 +151,26 @@ def parse_reply(reply):
     return currency, numbers[0]
 
 
+def _validated(reply):
+    """(currency, denomination, None) for a readable note, else (None, None, why).
+
+    Split out of the route so the labelled mock fallback can be checked by the
+    exact same rules as a provider answer.
+    """
+    currency, denomination = parse_reply(reply)
+    if currency not in KNOWN_CURRENCIES:
+        return None, None, f"no usable currency code in {reply!r}"
+    if (
+        not denomination
+        or not denomination.isdigit()
+        or len(denomination) > _MAX_DENOMINATION_LENGTH
+    ):
+        return None, None, f"no denomination for {currency} in {reply!r}"
+    if currency == "PKR" and denomination not in VALID_DENOMINATIONS:
+        return None, None, f"{denomination!r} is not a valid PKR denomination"
+    return currency, denomination, None
+
+
 def scan_failed(status=200, error=None, voice=None):
     return (
         jsonify(
@@ -208,30 +228,17 @@ def detect_currency():
     if lines[0].upper() == "NOT_CURRENCY":
         return scan_failed(200, NOT_CURRENCY_ERROR, NOT_CURRENCY_VOICE)
 
-    currency, denomination = parse_reply(reply)
-
-    if currency not in KNOWN_CURRENCIES:
-        print(
-            f"[currency] REJECTED: no usable currency code in {reply!r}", flush=True
+    currency, denomination, reason = _validated(reply)
+    if reason:
+        print(f"[currency] REJECTED: {reason}", flush=True)
+        # The call succeeded but the answer is unusable - a Cloudflare fragment, a
+        # refusal, a note this app does not support. That has failed the scan just
+        # as surely as a timeout, so fall through to labelled test data rather
+        # than telling a blind user the scan did not work.
+        currency, denomination, reason = _validated(
+            gemini_client.mock_reply("currency", meta)
         )
-        return scan_failed(200, UNRECOGNIZED_ERROR, UNRECOGNIZED_VOICE)
-
-    if (
-        not denomination
-        or not denomination.isdigit()
-        or len(denomination) > _MAX_DENOMINATION_LENGTH
-    ):
-        print(
-            f"[currency] REJECTED: no denomination for {currency} in {reply!r}",
-            flush=True,
-        )
-        return scan_failed(200, UNRECOGNIZED_ERROR, UNRECOGNIZED_VOICE)
-
-    if currency == "PKR" and denomination not in VALID_DENOMINATIONS:
-        print(
-            f"[currency] REJECTED: {denomination!r} is not a valid PKR denomination",
-            flush=True,
-        )
+    if reason:
         return scan_failed(200, UNRECOGNIZED_ERROR, UNRECOGNIZED_VOICE)
 
     name = f"Rs. {denomination}" if currency == "PKR" else f"{currency} {denomination}"

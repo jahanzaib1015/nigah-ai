@@ -33,7 +33,13 @@ import gemini_client
 from gemini_client import SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE
 import app as app_module
 from routes.currency import NOT_CURRENCY_ERROR, UNRECOGNIZED_ERROR
-from routes.medicine import NAME_MISSING_ERROR, NO_DATES_ERROR, UNCLEAR_ERROR
+from routes.currency import UNCLEAR_ERROR as CURRENCY_UNCLEAR_ERROR
+from routes.medicine import (
+    NAME_MISSING_ERROR,
+    NOT_MEDICINE_ERROR,
+    NO_DATES_ERROR,
+    UNCLEAR_ERROR,
+)
 
 CHECKS = []
 
@@ -91,6 +97,26 @@ def outage():
 
     def restore():
         gemini_client._PROVIDER_CALLS, gemini_client.MOCK_VISION = saved
+
+    return restore
+
+
+def answering(reply):
+    """Simulate a provider that ANSWERS with text the validators cannot use.
+
+    A flaky upstream does not always time out: TabiAI behind Cloudflare has
+    returned an HTML block page and a model has returned a refusal sentence. The
+    call succeeds, so generate() never reaches its own mock tail - the route has
+    to notice the answer is unusable. MOCK_VISION is forced on for the duration
+    because this suite pins it off at import.
+    """
+    restore_stub = install(Stub(reply=reply))
+    saved_mock = gemini_client.MOCK_VISION
+    gemini_client.MOCK_VISION = True
+
+    def restore():
+        restore_stub()
+        gemini_client.MOCK_VISION = saved_mock
 
     return restore
 
@@ -540,6 +566,84 @@ def t_mock_label_spares_real_row():
     assert row["status"] == "expired", row
     assert row["expiry_date"] == "2024-01-15", row
     assert row["mfg_date"] is None, row
+
+
+@check("a provider that answers with an unusable reply still falls back to test data")
+def t_junk_reply_falls_back():
+    reset_db()
+
+    restore = answering("THB\n500")
+    try:
+        response = upload("/detect-currency")
+        assert response.status_code == 200, response.status_code
+        body = response.get_json()
+        assert body["success"] is True, body
+        assert (body["currency"], body["denomination"]) == ("PKR", "1000"), body
+        assert body["mock"] is True and body["provider"] == "mock", body
+        assert body["mock_notice"] == gemini_client.MOCK_NOTICE_TEXT, body
+        assert body["mock_voice"] == gemini_client.MOCK_NOTICE_VOICE, body
+    finally:
+        restore()
+
+    # A refusal sentence is made of letters, so the strength and length guards
+    # let it through; it used to be SAVED as the name and spoken as a drug.
+    restore = answering("sorry, the packaging text is cut off")
+    try:
+        body = upload("/detect-medicine").get_json()
+        assert body["success"] is True, body
+        assert body["name"] == "Panadol 500mg", body
+        assert body["expiry_date"], body
+        assert body["mfg_date"], body
+        assert body["status"] == "safe", body
+        assert body["mock"] is True and body["mock_notice"], body
+        item_id = body["id"]
+    finally:
+        restore()
+
+    restore = answering("Batch: 45452")
+    try:
+        body = upload(
+            "/detect-medicine", extra={"scan_type": "label", "item_id": str(item_id)}
+        ).get_json()
+        assert body["success"] is True, body
+        assert body["expiry_date"] and body["mfg_date"], body
+        assert body["mock_notice"], body
+    finally:
+        restore()
+
+    # Nothing here was a real detection, so every row has to say so.
+    rows = db.get_items()
+    assert [row["is_mock"] for row in rows] == [1, 1], rows
+    names = sorted(row["name"] for row in rows)
+    assert names == ["Panadol 500mg", "Rs. 1000"], names
+
+
+@check("photo sentinels keep their own message and are never replaced by test data")
+def t_sentinels_survive_mock():
+    """UNCLEAR / NOT_CURRENCY / NOT_MEDICINE / NO_DATES are the model's judgement
+    about the PHOTO, not a service failure. Inventing a note the user is not
+    holding would be worse than asking them to rescan, so these stay failures."""
+    reset_db()
+    cases = (
+        ("/detect-currency", None, "UNCLEAR", CURRENCY_UNCLEAR_ERROR),
+        ("/detect-currency", None, "NOT_CURRENCY", NOT_CURRENCY_ERROR),
+        ("/detect-medicine", None, "UNCLEAR", UNCLEAR_ERROR),
+        ("/detect-medicine", None, "NOT_MEDICINE", NOT_MEDICINE_ERROR),
+        ("/detect-medicine", {"scan_type": "label"}, "NO_DATES", NO_DATES_ERROR),
+    )
+    for path, extra, reply, expected in cases:
+        restore = answering(reply)
+        try:
+            response = upload(path, extra)
+            assert response.status_code == 200, (reply, response.status_code)
+            body = response.get_json()
+            assert body["success"] is False, (reply, body)
+            assert body["error"] == expected, (reply, body)
+            assert body["voice"], (reply, body)
+            assert "mock_notice" not in body, (reply, body)
+        finally:
+            restore()
+    assert db.get_items() == [], "a photo the model could not read must not create a row"
 
 
 @check("/health reports the whole chain")

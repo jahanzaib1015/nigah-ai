@@ -262,6 +262,29 @@ def _mock_reply(task):
     return "MOCK_REPLY"
 
 
+def mock_reply(task, meta=None):
+    """Serve the labelled test-data reply, marking `meta` as mock.
+
+    Returns None when MOCK_VISION is off, so a strict deployment still reports
+    the real failure instead of inventing an answer. The routes call this both
+    when every provider raised and when a provider ANSWERED with text the
+    validators cannot use - a flaky upstream that replies with a Cloudflare
+    fragment or a refusal has failed the scan just as surely as one that timed
+    out, and used to surface as "pehchan nahi ho saki" instead of test data.
+    """
+    if not MOCK_VISION:
+        return None
+    if isinstance(meta, dict):
+        meta["provider"] = "mock"
+        meta["mock"] = True
+    print(
+        f"[vision] MOCK reply served (task={task!r}) - no provider gave a usable "
+        "answer, this is NOT a real detection",
+        flush=True,
+    )
+    return _mock_reply(task)
+
+
 # Shared by both scan routes: shown when generate() itself fails (upstream
 # timeout, 429/503, Cloudflare block, DeadlineExceeded), as opposed to a reply
 # that parses badly.
@@ -344,16 +367,9 @@ def generate(prompt, image_data=None, mime_type="image/jpeg", meta=None, task=No
             info["seconds"] = round(elapsed, 1)
         return text
 
-    if MOCK_VISION:
-        print(
-            f"[vision] MOCK reply served (task={task!r}) - no provider answered, "
-            "this is NOT a real detection",
-            flush=True,
-        )
-        if info is not None:
-            info["provider"] = "mock"
-            info["mock"] = True
-        return _mock_reply(task)
+    text = mock_reply(task, info)
+    if text is not None:
+        return text
 
     attempts = (info or {}).get("attempts", [])
     detail = ", ".join(f"{a['provider']}={a['error']}" for a in attempts)

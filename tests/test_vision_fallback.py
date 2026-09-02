@@ -227,6 +227,30 @@ def t_mock_last_resort():
         restore()
 
 
+@check("mock_reply feeds the routes on demand, and refuses when mock is off")
+def t_mock_reply_helper():
+    restore = swap([], {}, mock=True)
+    try:
+        meta = {}
+        assert gemini_client.mock_reply("currency", meta) == "PKR\n1000"
+        assert meta == {"provider": "mock", "mock": True}, meta
+        assert gemini_client.mock_reply("medicine").startswith("Panadol 500mg")
+        label = gemini_client.mock_reply("label").splitlines()
+        assert len(label) == 2 and label[0] > label[1], label
+    finally:
+        restore()
+
+    restore = swap([], {}, mock=False)
+    try:
+        # A strict deployment must report the real validation failure instead of
+        # inventing an answer, so the helper hands back nothing at all.
+        meta = {}
+        assert gemini_client.mock_reply("currency", meta) is None
+        assert meta == {}, "a refused mock must not mark the reply"
+    finally:
+        restore()
+
+
 @check("mock never answers while a real provider still works")
 def t_mock_not_used_early():
     restore = swap(

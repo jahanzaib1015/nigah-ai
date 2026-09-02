@@ -34,6 +34,9 @@ VALID = {
     "پانڈول 500mg": "پانڈول 500mg",
     "پانڈول 500": "پانڈول 500",
     "Amoxicillin 250mg": "Amoxicillin 250mg",
+    # Near misses for the refusal guard: a real brand may start with "No"/"Not".
+    "Novalgin 500mg": "Novalgin 500mg",
+    "Notofen 400mg": "Notofen 400mg",
 }
 
 REJECTED = [
@@ -60,6 +63,14 @@ REJECTED = [
     "None",
     "N/A",
     "x" * 121,
+    # Prose refusals: made of letters, so only the refusal guard catches them.
+    # Saved as a name these would be spoken as "yeh <apology> dawai hai".
+    "sorry, the packaging text is cut off",
+    "I cannot determine the brand name",
+    "Unable to read the name",
+    "The brand name is not visible",
+    "No medicine name visible",
+    "UNCLEAR",
 ]
 
 

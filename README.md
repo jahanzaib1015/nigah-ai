@@ -264,8 +264,8 @@ python tests/test_parsing_and_db.py
 ```
 No network, no API quota, no writes to the real Meri List — provider callables and the clock are injected, and the database is a throwaway file.
 
-- `test_vision_fallback.py` — **15 checks**: provider ordering per `APP_MODE`, fallback on failure, the chain budget and per-provider slice caps, the wall-clock bound that abandons a transport ignoring its own timeout, the `MOCK_VISION` default, and the notice that labels a mock answer.
-- `test_routes_offline.py` — **21 checks**: both scan routes end to end, including validation refusals, the two-step medicine label merge, Meri List read/delete, a total outage answering with labelled test data instead of a 503, and the rule that a mock label scan cannot overwrite dates read from a real pack.
+- `test_vision_fallback.py` — **16 checks**: provider ordering per `APP_MODE`, fallback on failure, the chain budget and per-provider slice caps, the wall-clock bound that abandons a transport ignoring its own timeout, the `MOCK_VISION` default, the notice that labels a mock answer, and the on-demand `mock_reply()` helper the routes fall back to.
+- `test_routes_offline.py` — **23 checks**: both scan routes end to end, including validation refusals, the two-step medicine label merge, Meri List read/delete, a total outage answering with labelled test data instead of a 503, a provider that *answers* with an unusable reply falling back the same way, the rule that photo sentinels keep their own guidance and are never replaced by test data, and the rule that a mock label scan cannot overwrite dates read from a real pack.
 - `test_parsing_and_db.py` — **21 checks**: currency and medicine reply parsing, expiry/mfg classification, status rules, and the SQLite layer including schema migration of an existing table.
 
 ### Currency Accuracy Benchmark
@@ -424,7 +424,7 @@ TABI_BASE_URL=https://your-dev-endpoint
 | `TABI_API_KEY` | Recommended | Development endpoint key, paired with `TABI_BASE_URL` |
 | `TABI_BASE_URL` | Recommended | Base URL of the development vision endpoint |
 | `APP_MODE` | Optional | `production` or `development` (default) — decides which provider the chain tries **first** (both stay wired up whenever their credentials exist) and toggles Flask debug auto-reload |
-| `MOCK_VISION` | Optional | **On by default.** When every provider is missing or failing, scans answer with stable labelled test data instead of a 503, so the UI and database stay testable through an upstream outage. Every mock answer announces itself — a `TEST DATA` badge on screen, a spoken Urdu notice, and an `is_mock` flag on the saved row. Set `MOCK_VISION=0` to make a deployment strict again and speak the service-down message |
+| `MOCK_VISION` | Optional | **On by default.** Scans answer with stable labelled test data instead of failing whenever no provider can give a usable answer — because every provider is missing or failing, *or* because one answered with a reply the validators cannot use (a Cloudflare block page, a refusal sentence, an unsupported currency code), which used to reach the user as "pehchan nahi ho saki". Every mock answer announces itself — a `TEST DATA` badge on screen, a spoken Urdu notice, and an `is_mock` flag on the saved row. A photo the model genuinely cannot read (`UNCLEAR`, `NOT_CURRENCY`, `NOT_MEDICINE`, `NO_DATES`) is a judgement about the photo, not a service failure, so it keeps its own rescan guidance and is never replaced by test data. Set `MOCK_VISION=0` to make a deployment strict again and speak the service-down message |
 | `PORT` | Optional | Server port; defaults to `5000` locally and is injected automatically by Railway in production |
 
 > **Note:** The `.env.example` file is maintained as a template; actual secrets are never committed to the repository.
