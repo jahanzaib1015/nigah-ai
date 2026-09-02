@@ -23,31 +23,23 @@ GEMINI_MODEL = "gemini-3.6-flash"
 # the spoken service-unavailable message instead of a bare HTML 500.
 _GOOGLE_TIMEOUT_SECONDS = 180
 
-# railway.json cannot set environment variables, so APP_MODE is easy to leave
-# out of the dashboard. Silently serving live traffic from the rate-limited dev
-# proxy looks exactly like a detection bug, so a Railway runtime always means
-# production unless Google is unusable there.
+# TabiAI is the default endpoint everywhere, live deploys included. Google
+# Gemini stays fully wired: set APP_MODE=production to switch a service over.
+# railway.json cannot set environment variables, so that switch lives in the
+# Railway dashboard under Variables.
 _ON_RAILWAY = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_ID"))
 
 
 def _resolve_mode():
     explicit = (os.getenv("APP_MODE") or "").strip().lower()
-    if _ON_RAILWAY:
-        if GEMINI_API_KEY:
-            if explicit != "production":
-                print(
-                    "[gemini] Railway runtime detected: forcing production mode "
-                    f"(APP_MODE={explicit or 'unset'})",
-                    flush=True,
-                )
-            return "production"
+    mode = explicit if explicit in ("production", "development") else "development"
+    if _ON_RAILWAY and mode == "development":
         print(
-            "[gemini] WARNING: Railway runtime without GEMINI_API_KEY - "
-            "falling back to the development endpoint",
+            "[gemini] Railway runtime: serving from the TabiAI endpoint "
+            f"(APP_MODE={explicit or 'unset'}); set APP_MODE=production for Google Gemini",
             flush=True,
         )
-        return "development"
-    return explicit if explicit in ("production", "development") else "development"
+    return mode
 
 
 APP_MODE = _resolve_mode()
