@@ -40,6 +40,9 @@ def frontend_files(filename):
 
 
 if __name__ == "__main__":
-    APP_MODE = (os.environ.get("APP_MODE") or "development").strip().lower()
+    # gemini_client resolves the real mode (it forces production on Railway),
+    # so debug auto-reload must follow that verdict, not the raw env var.
+    from gemini_client import APP_MODE as RESOLVED_APP_MODE
+
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=(APP_MODE != "production"))
+    app.run(host="0.0.0.0", port=port, debug=(RESOLVED_APP_MODE != "production"))

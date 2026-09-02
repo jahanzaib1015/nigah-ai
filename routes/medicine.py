@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify, request
 
 import db
 import gemini_client
+from gemini_client import SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE
 
 MEDICINE_PROMPT = (
     "You are an expert on medicine packaging. The image may show a medicine BOX "
@@ -123,6 +124,9 @@ NAME_MISSING_VOICE = (
     "رکھیں اور دوبارہ کوشش کریں۔"
 )
 
+NO_PHOTO_ERROR = "Koi photo nahi mili. Dobara koshish karein."
+NO_PHOTO_VOICE = "کوئی تصویر نہیں ملی۔ دوبارہ کوشش کریں۔"
+
 medicine_bp = Blueprint("medicine", __name__)
 
 
@@ -189,15 +193,12 @@ def detect_medicine():
 
     image = request.files.get("image")
     if image is None or image.filename == "":
-        return scan_failed(
-            400,
-            "Koi photo nahi mili. Dobara koshish karein.",
-            "کوئی تصویر نہیں ملی۔ دوبارہ کوشش کریں۔",
-        )
+        return scan_failed(400, NO_PHOTO_ERROR, NO_PHOTO_VOICE)
 
     image_data = image.read()
     if not image_data:
-        return scan_failed()
+        print("[medicine] EMPTY UPLOAD: image field present but zero bytes", flush=True)
+        return scan_failed(400, NO_PHOTO_ERROR, NO_PHOTO_VOICE)
 
     mime_type = image.mimetype or "image/jpeg"
     scan_type = (request.form.get("scan_type") or "medicine").strip().lower()
@@ -209,8 +210,11 @@ def detect_medicine():
         response_text = gemini_client.generate(MEDICINE_PROMPT, image_data, mime_type)
         print(f"[medicine] gemini replied: {response_text!r}", flush=True)
     except Exception as error:
-        print(f"Gemini API error: {error}", flush=True)
-        return scan_failed(500)
+        print(
+            f"[medicine] VISION API FAILURE ({type(error).__name__}): {error}",
+            flush=True,
+        )
+        return scan_failed(503, SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE)
 
     lines = [line.strip() for line in response_text.strip().splitlines() if line.strip()]
 
@@ -226,9 +230,12 @@ def detect_medicine():
 
     name = clean_name(lines[0])
     if name is None:
-        if _is_strength_only(lines[0]):
-            return scan_failed(200, NAME_MISSING_ERROR, NAME_MISSING_VOICE)
-        return scan_failed()
+        print(
+            f"[medicine] GUARD REJECTED name line {lines[0]!r} "
+            f"(strength_only={_is_strength_only(lines[0])}, len={len(lines[0])})",
+            flush=True,
+        )
+        return scan_failed(200, NAME_MISSING_ERROR, NAME_MISSING_VOICE)
 
     expiry_raw = lines[1] if len(lines) > 1 else "EXPIRY_NOT_VISIBLE"
     expiry_date = (
@@ -267,8 +274,11 @@ def detect_label(image_data, mime_type):
         response_text = gemini_client.generate(LABEL_PROMPT, image_data, mime_type)
         print(f"[medicine] label gemini replied: {response_text!r}", flush=True)
     except Exception as error:
-        print(f"Gemini API error: {error}", flush=True)
-        return scan_failed(500)
+        print(
+            f"[medicine] label VISION API FAILURE ({type(error).__name__}): {error}",
+            flush=True,
+        )
+        return scan_failed(503, SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE)
 
     lines = [line.strip() for line in response_text.strip().splitlines() if line.strip()]
 

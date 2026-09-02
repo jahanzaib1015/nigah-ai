@@ -1,0 +1,9 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "deploy": {
+    "startCommand": "gunicorn --timeout 200 app:app",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 60,
+    "numReplicas": 1
+  }
+}

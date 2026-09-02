@@ -11,14 +11,41 @@ import requests
 
 load_dotenv()
 
-APP_MODE = (os.getenv("APP_MODE") or "development").strip().lower()
-
 TABI_API_KEY = (os.getenv("TABI_API_KEY") or "").strip()
 TABI_BASE_URL = (os.getenv("TABI_BASE_URL") or "").strip().rstrip("/")
 TABI_MODEL = "claude-opus-4-8"
 
 GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip()
 GEMINI_MODEL = "gemini-3.6-flash"
+
+# railway.json cannot set environment variables, so APP_MODE is easy to leave
+# out of the dashboard. Silently serving live traffic from the rate-limited dev
+# proxy looks exactly like a detection bug, so a Railway runtime always means
+# production unless Google is unusable there.
+_ON_RAILWAY = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_ID"))
+
+
+def _resolve_mode():
+    explicit = (os.getenv("APP_MODE") or "").strip().lower()
+    if _ON_RAILWAY:
+        if GEMINI_API_KEY:
+            if explicit != "production":
+                print(
+                    "[gemini] Railway runtime detected: forcing production mode "
+                    f"(APP_MODE={explicit or 'unset'})",
+                    flush=True,
+                )
+            return "production"
+        print(
+            "[gemini] WARNING: Railway runtime without GEMINI_API_KEY - "
+            "falling back to the development endpoint",
+            flush=True,
+        )
+        return "development"
+    return explicit if explicit in ("production", "development") else "development"
+
+
+APP_MODE = _resolve_mode()
 
 if APP_MODE == "production":
     if not GEMINI_API_KEY:
@@ -101,6 +128,16 @@ def _generate_google(prompt, image_data, mime_type):
         for candidate in response.candidates
         for part in candidate.content.parts
     )
+
+
+# Shared by both scan routes: shown when generate() itself fails (upstream
+# timeout, 429/503, Cloudflare block), as opposed to a reply that parses badly.
+SERVICE_DOWN_ERROR = (
+    "Scanning service abhi available nahi hai. Thodi der baad koshish karein."
+)
+SERVICE_DOWN_VOICE = (
+    "اسکیننگ سروس ابھی دستیاب نہیں ہے۔ تھوڑی دیر بعد کوشش کریں۔"
+)
 
 
 def generate(prompt, image_data=None, mime_type="image/jpeg"):
