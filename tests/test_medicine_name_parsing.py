@@ -59,7 +59,7 @@ REJECTED = [
     "EXPIRY_NOT_VISIBLE",
     "None",
     "N/A",
-    "x" * 81,
+    "x" * 121,
 ]
 
 
@@ -85,6 +85,8 @@ def main():
     assert not _is_strength_only("پانڈول")
     assert voice_name("Getformin 2mg + 500mg") == "Getformin 2mg plus 500mg"
     assert voice_name("Panadol 500 milligram") == "Panadol 500 mg"
+    assert clean_name("x" * 120) is not None, "a 120-char name must survive"
+    assert clean_name("x" * 121) is None, "the cap must still reject a paragraph"
     print("guard + voice_name OK")
 
 

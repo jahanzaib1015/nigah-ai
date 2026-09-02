@@ -57,6 +57,13 @@
         });
       }
 
+      function formatItemDates(item) {
+        var parts = [];
+        if (item.expiry_date) parts.push('Expiry: ' + item.expiry_date);
+        if (item.mfg_date) parts.push('Mfg: ' + item.mfg_date);
+        return parts.join('  |  ');
+      }
+
       function badgeFor(item) {
         if (item.status === 'expired') return { cls: 'badge-expired', label: 'Expired' };
         if (item.status === 'safe') return { cls: 'badge-success', label: 'Safe' };
@@ -100,6 +107,14 @@
         time.textContent = formatTime(item.timestamp);
         info.appendChild(name);
         info.appendChild(time);
+
+        var datesText = formatItemDates(item);
+        if (datesText) {
+          var dates = document.createElement('p');
+          dates.className = 'item-time';
+          dates.textContent = datesText;
+          info.appendChild(dates);
+        }
 
         var badge = null;
         if (item.type === 'medicine') {

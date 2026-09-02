@@ -32,14 +32,10 @@ def index():
 
 @app.route("/health")
 def health():
-    # Reports the resolved endpoint so a deployed instance can be verified from
-    # outside: a silent fallback to the dev proxy is otherwise invisible.
-    model = (
-        gemini_client.GEMINI_MODEL
-        if gemini_client.APP_MODE == "production"
-        else gemini_client.TABI_MODEL
-    )
-    return f"Nigah AI Backend Running (mode={gemini_client.APP_MODE}, model={model})"
+    # Reports the resolved provider chain so a deployed instance can be verified
+    # from outside: which endpoint answers, and in what order, is otherwise
+    # invisible.
+    return f"Nigah AI Backend Running ({gemini_client.health_summary()})"
 
 
 @app.route("/<path:filename>")
@@ -48,7 +44,7 @@ def frontend_files(filename):
 
 
 if __name__ == "__main__":
-    # gemini_client resolves the real mode (it forces production on Railway),
-    # so debug auto-reload must follow that verdict, not the raw env var.
+    # Read the mode gemini_client actually resolved, so debug auto-reload can
+    # never disagree with the provider chain it built.
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=(gemini_client.APP_MODE != "production"))

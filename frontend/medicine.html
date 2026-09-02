@@ -199,7 +199,7 @@
         return parts.join('  |  ');
       }
 
-      function showResult(success, name, errorMsg, errorVoice, status, expiryDate, voiceName) {
+      function showResult(success, name, errorMsg, errorVoice, status, expiryDate, voiceName, mfgDate) {
         resultShown = true;
         shell.classList.add('result-open');
         fallback.classList.add('hidden');
@@ -218,8 +218,8 @@
           failCount = 0;
           resultCard.classList.add('is-success');
           resultValue.textContent = name;
-          if (expiryDate) {
-            resultDates.textContent = formatDates(expiryDate, null);
+          if (expiryDate || mfgDate) {
+            resultDates.textContent = formatDates(expiryDate, mfgDate);
             resultDates.classList.remove('hidden');
           } else {
             resultDates.classList.add('hidden');
@@ -327,7 +327,7 @@
             } else if (data && data.success) {
               pendingId = data.id;
               pendingName = data.name;
-              showResult(true, data.name, null, null, data.status, data.expiry_date, data.voice_name);
+              showResult(true, data.name, null, null, data.status, data.expiry_date, data.voice_name, data.mfg_date);
             } else {
               showResult(false, null, data && data.error, data && data.voice);
             }

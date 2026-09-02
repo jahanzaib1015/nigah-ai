@@ -1,3 +1,4 @@
+import calendar
 import re
 from datetime import date, datetime
 
@@ -43,7 +44,8 @@ MEDICINE_PROMPT = (
     "625mg'); do not let marketing subtitles or taglines make you drop the "
     "name - read the brand, not the tagline. Keep line 1 concise: the brand "
     "or salt name plus strength only, without extra words like Tablet, "
-    "Capsule, or Syrup unless they are part of the printed name itself. "
+    "Capsule, or Syrup unless they are part of the printed name itself. Do not "
+    "prefix line 1 with 'Name:' or 'Line 1:' - write the name itself. "
     "If the medicine has more than one strength (for example 10mg and 1000mg), "
     "write the strengths exactly as printed, joined with the '+' symbol, like "
     "'10mg + 1000mg' - keep the '+' symbol in your reply. "
@@ -92,6 +94,18 @@ NO_DATES_VOICE = (
     "سکتے ہیں یا اسکپ کر سکتے ہیں۔"
 )
 
+NAME_MISSING_ERROR = (
+    "Dawai ka naam nahi parh saka. Brand name wali side camera ke samne "
+    "rakhein aur dobara koshish karein."
+)
+NAME_MISSING_VOICE = (
+    "دوائی کا نام نہیں پڑھ سکا۔ برانڈ نیم والی سائیڈ کیمرے کے سامنے "
+    "رکھیں اور دوبارہ کوشش کریں۔"
+)
+
+NO_PHOTO_ERROR = "Koi photo nahi mili. Dobara koshish karein."
+NO_PHOTO_VOICE = "کوئی تصویر نہیں ملی۔ دوبارہ کوشش کریں۔"
+
 _STRENGTH_TOKEN = (
     r"\d+(?:\.\d+)?\s*(?:milligrams?|milliliters?|millilitres?|micrograms?|"
     r"grams?|mcg|ug|µg|mg|ml|iu|g)"
@@ -115,26 +129,175 @@ def _is_strength_only(value):
         return True
     return not re.search(r"[^\W\d_]", text)
 
-NAME_MISSING_ERROR = (
-    "Dawai ka naam nahi parh saka. Brand name wali side camera ke samne "
-    "rakhein aur dobara koshish karein."
-)
-NAME_MISSING_VOICE = (
-    "دوائی کا نام نہیں پڑھ سکا۔ برانڈ نیم والی سائیڈ کیمرے کے سامنے "
-    "رکھیں اور دوبارہ کوشش کریں۔"
-)
-
-NO_PHOTO_ERROR = "Koi photo nahi mili. Dobara koshish karein."
-NO_PHOTO_VOICE = "کوئی تصویر نہیں ملی۔ دوبارہ کوشش کریں۔"
 
 medicine_bp = Blueprint("medicine", __name__)
 
+_MONTHS = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
 
-def parse_date(value):
-    try:
-        return datetime.strptime(value.strip(), "%Y-%m-%d").date()
-    except (ValueError, AttributeError):
+# A date has to carry a separator or a month name. Bare digit runs stay
+# unparseable on purpose - that is what stops a batch or lot number from being
+# reported to a blind user as an expiry date.
+_NUMERIC_DATE_FORMATS = (
+    "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d",
+    "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y",
+)
+_TEXTUAL_DATE_FORMATS = (
+    "%d %b %Y", "%d %B %Y", "%d-%b-%Y", "%d-%B-%Y", "%d %b, %Y", "%d %B, %Y",
+    "%b %d %Y", "%B %d %Y", "%b %d, %Y", "%B %d, %Y",
+)
+# The US month-first numeric form is deliberately absent: for an ambiguous
+# numeric date it is safer to parse nothing (status "unknown") than to flip day
+# and month and tell the user the wrong expiry.
+_EXPIRY_LABEL_RE = re.compile(
+    r"\b(?:expiry|expiration|expires|exp|use\s*before|best\s*before)\b[\s:._\-]*",
+    re.IGNORECASE,
+)
+_MFG_LABEL_RE = re.compile(
+    r"\b(?:mfg|mfd|manf|manufacturing|manufactured)\b[\s:._\-]*",
+    re.IGNORECASE,
+)
+# Batch and lot markers are never dates, even when the value looks like one.
+_BATCH_LABEL_RE = re.compile(
+    r"\b(?:batch|lot|b[./\-]?no|serial|ref)\b[\s:._\-]*",
+    re.IGNORECASE,
+)
+_WORD_DATE_RE = re.compile(r"^(?:(\d{1,2})[\s,\-/]*)?([A-Za-z]{3,9})\.?[\s,\-/]*(\d{2,4})$")
+_MONTH_YEAR_RE = re.compile(r"^(\d{1,2})\s*[-/.]\s*(\d{4})$")
+_YEAR_MONTH_RE = re.compile(r"^(\d{4})\s*[-/.]\s*(\d{1,2})$")
+_BARE_YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
+
+
+def _end_of_month(year, month):
+    return date(year, month, calendar.monthrange(year, month)[1])
+
+
+def parse_date(value, allow_bare_year=False):
+    """Parse a printed date in the shapes Pakistani packs actually use.
+
+    The prompts ask for ISO, but models also return 03/2027, MAR-2027,
+    31-12-2027 or "Expiry Date: 2027-03-31", and a date that was genuinely read
+    must not be thrown away - it silently downgraded the medicine to "unknown".
+    A month-only expiry resolves to the last day of that month, which is how
+    pharmaceutical expiry dating works.
+    """
+    text = (value or "").strip()
+    if not text:
         return None
+
+    for fmt in _NUMERIC_DATE_FORMATS + _TEXTUAL_DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+
+    match = _WORD_DATE_RE.match(text)
+    if match:
+        month = _MONTHS.get(match.group(2).lower())
+        if month:
+            year = int(match.group(3))
+            if year < 100:
+                year += 2000 if year < 50 else 1900
+            day = int(match.group(1)) if match.group(1) else None
+            try:
+                return date(year, month, day or _end_of_month(year, month).day)
+            except ValueError:
+                return None
+
+    match = _MONTH_YEAR_RE.match(text)
+    if match:
+        month, year = int(match.group(1)), int(match.group(2))
+        if 1 <= month <= 12:
+            return _end_of_month(year, month)
+
+    match = _YEAR_MONTH_RE.match(text)
+    if match:
+        year, month = int(match.group(1)), int(match.group(2))
+        if 1 <= month <= 12:
+            return _end_of_month(year, month)
+
+    # "EXP 2027" is common on blister foil, but a bare year is only trusted when
+    # the pack labelled it as the expiry - otherwise it is just as likely to be
+    # the start of a batch number.
+    if allow_bare_year and _BARE_YEAR_RE.match(text):
+        return _end_of_month(int(text), 12)
+
+    return None
+
+
+def read_date_line(line):
+    """Return (parsed_date, kind) where kind is 'expiry', 'mfg', 'batch' or 'plain'.
+
+    An explicitly manufacturing-labelled date is reported as 'mfg' so the caller
+    can store it without ever passing it off as the expiry - that mistake would
+    show a safe medicine as "Khatra! Expired". A batch or lot value is reported
+    as no date at all.
+    """
+    text = (line or "").strip()
+    if not text:
+        return None, "plain"
+
+    labelled_expiry = bool(_EXPIRY_LABEL_RE.search(text))
+    if _BATCH_LABEL_RE.search(text) and not labelled_expiry:
+        return None, "batch"
+    labelled_mfg = bool(_MFG_LABEL_RE.search(text))
+
+    cleaned = _EXPIRY_LABEL_RE.sub("", text)
+    cleaned = _MFG_LABEL_RE.sub("", cleaned)
+    cleaned = re.sub(r"\bdate\b[\s:._\-]*", "", cleaned, flags=re.IGNORECASE).strip()
+
+    parsed = parse_date(cleaned, allow_bare_year=labelled_expiry)
+    if parsed is None:
+        return None, "plain"
+    if labelled_mfg:
+        return parsed, "mfg"
+    if labelled_expiry:
+        return parsed, "expiry"
+    return parsed, "plain"
+
+
+def read_dates(lines, second_is_mfg=False):
+    """Pull (expiry, mfg) out of the reply's date lines.
+
+    Labelled dates are always trusted. Unlabeled ones are read by position,
+    which differs per prompt: the medicine scan sends a bare expiry first,
+    while the label scan sends a bare expiry first AND a bare manufacturing
+    date second (`second_is_mfg`). Anything unlabeled in a later position is
+    ignored rather than guessed at.
+    """
+    expiry = None
+    mfg = None
+    for index, line in enumerate(lines):
+        parsed, kind = read_date_line(line)
+        if parsed is None:
+            continue
+        if kind == "mfg":
+            if mfg is None:
+                mfg = parsed
+            continue
+        if kind == "expiry":
+            if expiry is None:
+                expiry = parsed
+            continue
+        if index == 0:
+            if expiry is None:
+                expiry = parsed
+        elif index == 1 and second_is_mfg:
+            if mfg is None:
+                mfg = parsed
+    return expiry, mfg
 
 
 def voice_name(name):
@@ -150,6 +313,13 @@ _LEADING_STRENGTH_RE = re.compile(
     rf"(?!\s*{_STRENGTH_CONNECTOR}\s*{_STRENGTH_TOKEN})\s+(.+)$",
     re.IGNORECASE,
 )
+_NAME_LABEL_RE = re.compile(
+    r"^(?:line\s*\d+|name|medicine|brand|product|dawai|label)\s*[:.\-)]\s*",
+    re.IGNORECASE,
+)
+# Long multi-salt names are real ("Pantoprazole 40mg + Domperidone 30mg SR
+# Capsules"), so the cap only has to catch a whole sentence.
+_MAX_NAME_LENGTH = 120
 
 
 def clean_name(raw):
@@ -157,7 +327,8 @@ def clean_name(raw):
     # model failed to provide one (empty, sentinel, strength-only, or a
     # bare number/symbol string with no letters).
     name = (raw or "").strip().strip("'\"*`").strip()
-    if not name or len(name) > 80 or name.upper() in _NAME_SENTINELS:
+    name = _NAME_LABEL_RE.sub("", name).strip()
+    if not name or len(name) > _MAX_NAME_LENGTH or name.upper() in _NAME_SENTINELS:
         return None
     # "500mg Panadol" -> "Panadol 500mg": the name must precede the strength.
     flipped = _LEADING_STRENGTH_RE.match(name)
@@ -179,6 +350,12 @@ def scan_failed(status=200, error=None, voice=None):
         ),
         status,
     )
+
+
+def medicine_status(expiry_date):
+    if expiry_date is None:
+        return "unknown"
+    return "expired" if expiry_date < date.today() else "safe"
 
 
 @medicine_bp.route("/detect-medicine", methods=["GET", "POST"])
@@ -206,9 +383,15 @@ def detect_medicine():
     if scan_type == "label":
         return detect_label(image_data, mime_type)
 
+    meta = {}
     try:
-        response_text = gemini_client.generate(MEDICINE_PROMPT, image_data, mime_type)
-        print(f"[medicine] gemini replied: {response_text!r}", flush=True)
+        response_text = gemini_client.generate(
+            MEDICINE_PROMPT, image_data, mime_type, meta=meta, task="medicine"
+        )
+        print(
+            f"[medicine] provider={meta.get('provider')} replied: {response_text!r}",
+            flush=True,
+        )
     except Exception as error:
         print(
             f"[medicine] VISION API FAILURE ({type(error).__name__}): {error}",
@@ -237,19 +420,19 @@ def detect_medicine():
         )
         return scan_failed(200, NAME_MISSING_ERROR, NAME_MISSING_VOICE)
 
-    expiry_raw = lines[1] if len(lines) > 1 else "EXPIRY_NOT_VISIBLE"
-    expiry_date = (
-        None if expiry_raw.upper() == "EXPIRY_NOT_VISIBLE" else parse_date(expiry_raw)
-    )
-
-    if expiry_date is not None:
-        status = "expired" if expiry_date < date.today() else "safe"
-    else:
-        status = "unknown"
+    expiry_date, mfg_date = read_dates(lines[1:])
+    status = medicine_status(expiry_date)
 
     item_id = db.add_item(
-        "medicine", name, status, expiry_date.isoformat() if expiry_date else None
+        "medicine",
+        name,
+        status,
+        expiry_date.isoformat() if expiry_date else None,
+        mfg_date.isoformat() if mfg_date else None,
     )
+    if item_id is None:
+        print(f"[medicine] DB FAILURE: {name!r} was not saved", flush=True)
+        return scan_failed(500)
 
     return jsonify(
         {
@@ -259,6 +442,9 @@ def detect_medicine():
             "status": status,
             "success": True,
             "expiry_date": expiry_date.isoformat() if expiry_date else None,
+            "mfg_date": mfg_date.isoformat() if mfg_date else None,
+            "provider": meta.get("provider"),
+            "mock": bool(meta.get("mock")),
         }
     )
 
@@ -270,9 +456,16 @@ def detect_label(image_data, mime_type):
     except ValueError:
         item_id = None
 
+    meta = {}
     try:
-        response_text = gemini_client.generate(LABEL_PROMPT, image_data, mime_type)
-        print(f"[medicine] label gemini replied: {response_text!r}", flush=True)
+        response_text = gemini_client.generate(
+            LABEL_PROMPT, image_data, mime_type, meta=meta, task="label"
+        )
+        print(
+            f"[medicine] label provider={meta.get('provider')} replied: "
+            f"{response_text!r}",
+            flush=True,
+        )
     except Exception as error:
         print(
             f"[medicine] label VISION API FAILURE ({type(error).__name__}): {error}",
@@ -285,28 +478,30 @@ def detect_label(image_data, mime_type):
     if not lines or lines[0].upper() == "NO_DATES":
         return scan_failed(200, NO_DATES_ERROR, NO_DATES_VOICE)
 
-    expiry_raw = lines[0]
-    mfg_raw = lines[1] if len(lines) > 1 else "MFG_NOT_VISIBLE"
-
-    expiry_date = (
-        None if expiry_raw.upper() == "EXPIRY_NOT_VISIBLE" else parse_date(expiry_raw)
-    )
-    mfg_date = (
-        None if mfg_raw.upper() == "MFG_NOT_VISIBLE" else parse_date(mfg_raw)
-    )
-
+    # Line 1 is the expiry and line 2 the manufacturing date; a reply that
+    # labels them explicitly is still read correctly.
+    expiry_date, mfg_date = read_dates(lines, second_is_mfg=True)
     if expiry_date is None and mfg_date is None:
+        print(f"[medicine] label REJECTED: no usable dates in {lines!r}", flush=True)
         return scan_failed(200, NO_DATES_ERROR, NO_DATES_VOICE)
 
-    updates = {}
-    status = None
-    if expiry_date is not None:
-        status = "expired" if expiry_date < date.today() else "safe"
-        updates["expiry_date"] = expiry_date.isoformat()
-        updates["status"] = status
+    status = medicine_status(expiry_date) if expiry_date else None
 
-    if item_id is not None and updates:
-        db.update_item(item_id, **updates)
+    if item_id is not None:
+        # update_item() ignores None, so a label scan that only saw the
+        # manufacturing date cannot erase a previously stored expiry.
+        db.update_item(
+            item_id,
+            expiry_date=expiry_date.isoformat() if expiry_date else None,
+            mfg_date=mfg_date.isoformat() if mfg_date else None,
+            status=status,
+        )
+        if db.get_item(item_id) is None:
+            print(
+                f"[medicine] DB FAILURE: label scan referenced missing item {item_id}",
+                flush=True,
+            )
+            return scan_failed(500)
 
     return jsonify(
         {
@@ -314,5 +509,7 @@ def detect_label(image_data, mime_type):
             "expiry_date": expiry_date.isoformat() if expiry_date else None,
             "mfg_date": mfg_date.isoformat() if mfg_date else None,
             "status": status,
+            "provider": meta.get("provider"),
+            "mock": bool(meta.get("mock")),
         }
     )
