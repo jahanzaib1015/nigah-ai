@@ -75,7 +75,6 @@
           </div>
         </div>
         <p class="result-value" id="resultValue">Rs. —</p>
-        <p class="mock-notice hidden" id="mockNotice"></p>
       </div>
 
       <div class="result-failure">
@@ -120,7 +119,6 @@
       var resultCard = document.getElementById('resultCard');
       var resultValue = document.getElementById('resultValue');
       var resultMessage = document.getElementById('resultMessage');
-      var mockNotice = document.getElementById('mockNotice');
       var againBtn = document.getElementById('againBtn');
       var homeBtn = document.getElementById('homeBtn');
 
@@ -131,9 +129,6 @@
 
       var INSTRUCTION_TEXT = 'آپ کرنسی پہچاننے والے اسکرین پر ہیں۔ نوٹ کو کیمرے کے سامنے رکھیں اور اسکرین پر کہیں بھی ٹیپ کریں۔';
       var SCANNING_TEXT = 'سکین ہو رہا ہے، تھوڑا انتظار کریں۔';
-      // Same wording the backend sends as mock_voice; kept here so it can be
-      // preloaded and so the notice still speaks if the field is missing.
-      var MOCK_VOICE = 'یہ ٹیسٹ ڈیٹا ہے۔ اسکیننگ سروس دستیاب نہ ہونے کی وجہ سے اصلی پہچان نہیں ہو سکی۔';
 
       function currencyDisplay(currency, denomination) {
         if (currency === 'PKR') return 'Rs. ' + denomination;
@@ -179,7 +174,7 @@
         loadingOverlay.classList.toggle('hidden', !value);
       }
 
-      function showResult(success, denomination, errorMsg, errorVoice, currency, mockText, mockVoice) {
+      function showResult(success, denomination, errorMsg, errorVoice, currency) {
         resultShown = true;
         shell.classList.add('result-open');
         fallback.classList.add('hidden');
@@ -188,19 +183,9 @@
         if (success) {
           failCount = 0;
           resultValue.textContent = currencyDisplay(currency, denomination);
-          if (mockText) {
-            mockNotice.textContent = mockText + ' — asli pehchan nahi hui';
-            mockNotice.classList.remove('hidden');
-            // Queued BEFORE the value so a test answer is never heard as a
-            // real detection of the note in the user's hand.
-            queueUrdu(mockVoice || MOCK_VOICE);
-          } else {
-            mockNotice.classList.add('hidden');
-          }
           queueUrdu(currencyVoice(currency, denomination));
         } else {
           failCount += 1;
-          mockNotice.classList.add('hidden');
           var message = errorMsg || 'Scan kamyaab nahi hua. Dobara koshish karein.';
           resultMessage.textContent = message;
           speakUrdu(errorVoice || 'اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔');
@@ -237,7 +222,7 @@
           })
           .then(function (data) {
             if (data && data.success) {
-              showResult(true, data.denomination, null, null, data.currency, data.mock_notice, data.mock_voice);
+              showResult(true, data.denomination, null, null, data.currency);
             } else {
               showResult(false, null, data && data.error, data && data.voice);
             }
@@ -288,9 +273,9 @@
       startCamera();
       speakUrdu(INSTRUCTION_TEXT);
       preloadUrdu(SCANNING_TEXT);
-      preloadUrdu(MOCK_VOICE);
+      preloadUrdu('پہچان نہیں ہو سکی۔ دوبارہ کوشش کریں۔');
       preloadUrdu('اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔');
-      preloadUrdu('یہ کرنسی نوٹ نہیں ہے۔ صرف کرنسی نوٹ کی تصویر لیں۔');
+      preloadUrdu('یہ پاکستانی کرنسی نوٹ نہیں ہے۔ صرف پاکستانی نوٹ کی تصویر لیں۔');
       preloadUrdu('کرنسی نوٹ فریم میں صحیح طریقے سے نظر نہیں آ رہا۔ نوٹ کو کیمرے کے سامنے سیدھا رکھیں اور دوبارہ کوشش کریں۔');
       preloadUrdu('مدد کے لیے اوپر کسٹمر کیئر بٹن دبائیں۔');
     })();

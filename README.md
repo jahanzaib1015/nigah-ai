@@ -73,7 +73,8 @@ This focused approach makes Nigah AI uniquely suited for the **Pakistani visuall
 - **Status badges:** Safe · Expired · No Expiry
 
 ### Currency Recognition
-- **Multi-currency support:** PKR, USD, GBP, INR, EUR, and OTHER.
+- **Pakistani Rupee (PKR) only** — every issued denomination: 5, 10, 20, 50, 75, 100, 200, 500, 1000, 5000.
+- A note of any other country is **refused**, never announced as rupees.
 - **Urdu voice announcement** of denomination.
 - **High accuracy** validated against a 67-image test dataset.
 - **Dedicated Pakistani note dataset** — PKR 10, 20, 50, 100, 500, 1000, 5000.
@@ -135,12 +136,23 @@ SQLite Database (History)
 
 ### Backend Components
 - **`app.py`** — Flask application entry point, routing, and API endpoints.
-- **`gemini_client.py`** — Google Gemini Vision API client with prompt engineering.
+- **`gemini_client.py`** — Google Gemini Vision client: one model (`gemini-3.6-flash`), one transport, one retry on HTTP 429, and the two strings spoken when a scan cannot be answered.
 - **`db.py`** — SQLite database helper functions for history storage.
 - **`routes/medicine.py`** — Medicine scanning logic, `clean_name()` guard, expiry parsing.
-- **`routes/currency.py`** — Currency detection and denomination mapping.
+- **`routes/currency.py`** — PKR note detection, denomination validation.
 - **`routes/merilist.py`** — GET/DELETE endpoints for scan history.
 - **`routes/speech.py`** — POST /generate-speech endpoint for Edge-TTS MP3 generation.
+
+### Reliability Contract
+
+This app tells a blind user which note or which medicine they are holding, so there are exactly **two** possible outcomes for every scan — never a third:
+
+1. **A genuine result.** Google Gemini read the photo and the validators accept what it said. The result is announced, spoken and saved to Meri List.
+2. **An honest failure.** Gemini failed, timed out, was rate-limited on both attempts, or replied with something the validators reject (a bare strength, a refusal sentence, an unissued denomination, a foreign note, an unreadable date). The user hears *"پہچان نہیں ہو سکی۔ دوبارہ کوشش کریں۔"* and **nothing is saved**.
+
+There is no fallback provider, no cached answer and no stand-in data of any kind. A reply that cannot be verified is treated as no reply at all, because a plausible invention is more dangerous than a failure. The one exception is a verdict about the *photo itself* — `UNCLEAR`, `NOT_CURRENCY`, `NOT_MEDICINE`, `NO_DATES` — which is also a failure, but keeps its own specific rescan guidance instead of the generic message.
+
+`gemini_client.py` refuses to import at all when `GEMINI_API_KEY` is missing, so a process that could not answer a scan never starts.
 
 ### Frontend Components
 - **`index.html`** — Mobile-first PWA shell.
@@ -155,7 +167,7 @@ SQLite Database (History)
 - **`manifest.json`** — PWA manifest.
 
 ### Data Storage
-- **SQLite (`nigah.db`)** — Stores scan history with fields: type, name, strength, expiry, timestamp, status.
+- **SQLite (`nigah.db`)** — Stores scan history in `scanned_items`: `id`, `type`, `name`, `status`, `expiry_date`, `mfg_date`, `timestamp`. Every row is a real detection.
 - **Server-side TTS cache (`speech_cache/`)** — Stores generated MP3 files with atomic writes and 1-hour freshness.
 
 ---
@@ -177,7 +189,7 @@ The medicine scanning module is fortified at **three layers** to guarantee relia
 - Rejects empty, >80-char, and sentinel replies (`UNKNOWN`, `N/A`, `NA`, `None`, `EXPIRY_NOT_VISIBLE`, `-`).
 - **`STRENGTH_ONLY_RE`** rejects bare and compound strengths (e.g., `500mg`, `1 g`, `10 ml`, `250mcg`, `10mg + 1000mg`).
 - **Leading-strength reordering** repairs inverted replies: `500mg Panadol` -> `Panadol 500mg` (guarded by negative lookahead to avoid splitting compound strengths).
-- On rejection, strength-only replies trigger a dedicated Urdu "name not readable — rescan" voice; other invalid replies get generic failure voice. The name is **never** silently degraded.
+- On rejection the scan simply fails with the honest Urdu message and nothing is saved. A bare strength or an apology is never degraded into a name, stored, or spoken as a medicine.
 
 ### Layer 3: Unit Tests (35 Cases)
 - **12 accepted** — plain brand, brand-only, compound `+`, slash concentration, inverted, quoted/padded, Urdu-script brand, Urdu + plain number, long multi-word names.
@@ -215,8 +227,8 @@ The medicine scanning module is fortified at **three layers** to guarantee relia
 
 ## Currency Recognition
 
-- **Supported Currencies:** PKR, USD, GBP, INR, EUR, OTHER.
-- **Gemini Vision API** analyzes the note and returns denomination + currency.
+- **Scope:** Pakistani Rupee (PKR) notes only. A reply naming any other currency is rejected, so a foreign note is never announced as rupees.
+- **Gemini Vision API** analyzes the note and returns the denomination.
 - **Urdu voice output** announces the amount clearly.
 - **67-image benchmark dataset** prepared for accuracy evaluation.
 - **Denomination mapping** ensures correct Urdu wording for each note value.
@@ -258,26 +270,26 @@ python tests/test_medicine_name_parsing.py
 
 ### Offline Test Suites
 ```bash
-python tests/test_vision_fallback.py
+python tests/test_vision_client.py
 python tests/test_routes_offline.py
 python tests/test_parsing_and_db.py
 ```
-No network, no API quota, no writes to the real Meri List — provider callables and the clock are injected, and the database is a throwaway file.
+No network, no API quota, no writes to the real Meri List — the transport call and the clock are injected, and the database is a throwaway file. **57 checks, all passing.**
 
-- `test_vision_fallback.py` — **16 checks**: provider ordering per `APP_MODE`, fallback on failure, the chain budget and per-provider slice caps, the wall-clock bound that abandons a transport ignoring its own timeout, the `MOCK_VISION` default, the notice that labels a mock answer, and the on-demand `mock_reply()` helper the routes fall back to.
-- `test_routes_offline.py` — **23 checks**: both scan routes end to end, including validation refusals, the two-step medicine label merge, Meri List read/delete, a total outage answering with labelled test data instead of a 503, a provider that *answers* with an unusable reply falling back the same way, the rule that photo sentinels keep their own guidance and are never replaced by test data, and the rule that a mock label scan cannot overwrite dates read from a real pack.
-- `test_parsing_and_db.py` — **21 checks**: currency and medicine reply parsing, expiry/mfg classification, status rules, and the SQLite layer including schema migration of an existing table.
+- `test_vision_client.py` — **11 checks**: the reply is returned exactly as the model wrote it, one retry after a 429 then success, exhaustion after two 429s, immediate failure with no retry on any other error, an empty (safety-blocked) reply treated as a failure rather than a blank result, images sent inline, `/health` naming one provider with no fallback, the Urdu failure line, an allowlist pinning the module's whole surface so no second transport or canned reply can reappear unnoticed, and the import-time refusal to start without `GEMINI_API_KEY`.
+- `test_routes_offline.py` — **23 checks**: both scan routes end to end, every validation refusal, that a foreign note is never announced as rupees, that a real client failure yields a 503 with the honest message and saves nothing, the two-step medicine label merge, Meri List read/delete, an allowlist pinning every field any endpoint may return, and the rule that photo sentinels keep their own guidance while still being failures.
+- `test_parsing_and_db.py` — **23 checks**: currency and medicine reply parsing, expiry/mfg classification, status rules, and the SQLite layer including schema migration of an existing table and an allowlist pinning the stored columns.
 
 ### Currency Accuracy Benchmark
 ```bash
 python tests/test_currency_accuracy.py
 ```
-- **67 real currency images** across denominations and currencies.
-- Script ready; execution pending due to Gemini API quota.
+- **67 real Pakistani note images** across every issued denomination.
+- Runs against a local server; execution pending due to Gemini API quota.
 
 ### API & Key Tests
 - `test_api.py` — Gemini API smoke test.
-- `test_keys.py` — Primary/backup key + model probing.
+- `test_keys.py` — API key + model probing.
 - `test_raw_error.py` — Raw Gemini error diagnostics.
 
 ### Sample Test Assets
@@ -331,10 +343,10 @@ python tests/test_currency_accuracy.py
 nigah-ai/
 |
 ├── app.py                      # Flask entrypoint: blueprints, static serving,
-│                               #   root catch-all, /health, PORT + APP_MODE
+│                               #   root catch-all, /health, PORT
 ├── db.py                       # SQLite layer — scanned_items (add/update/get/delete)
-├── gemini_client.py            # Unified vision API: dev/prod endpoint switching,
-│                               #   image shrinking, retries, inline base64
+├── gemini_client.py            # Google Gemini only: gemini-3.6-flash, inline
+│                               #   base64 image, 60s deadline, one retry on 429
 |
 ├── Procfile                    # web: gunicorn --timeout 200 app:app (Railway)
 ├── requirements.txt            # flask, flask-cors, google-generativeai,
@@ -345,7 +357,7 @@ nigah-ai/
 |
 ├── routes/
 │   ├── __init__.py
-│   ├── currency.py             # POST /detect-currency — denomination + currency
+│   ├── currency.py             # POST /detect-currency — PKR denomination only
 │   ├── medicine.py             # POST /detect-medicine — clean_name() guards,
 │   │                           #   expiry parsing, label-scan merge, voice_name
 │   ├── merilist.py             # GET /meri-list · DELETE /meri-list/<id>
@@ -369,11 +381,17 @@ nigah-ai/
 │   └── rasterize_icons.py      # SVG -> PNG icon generator (dev tool)
 |
 ├── tests/
+│   ├── test_vision_client.py           # 11 offline checks: the single Google
+│   │                                   #   transport, its retry and its failures
+│   ├── test_routes_offline.py          # 23 offline checks: both scan routes,
+│   │                                   #   Meri List, every refusal path
+│   ├── test_parsing_and_db.py          # 23 offline checks: reply parsing and
+│   │                                   #   the SQLite layer
 │   ├── test_medicine_name_parsing.py   # Unit tests: 12 accept + 23 reject
 │   │                                   #   cases for the name-extraction guards
 │   ├── test_currency_accuracy.py       # Accuracy benchmark vs. currency_PKR/
 │   ├── test_api.py             # Gemini API smoke test
-│   ├── test_keys.py            # Primary/backup key + model probing
+│   ├── test_keys.py            # API key + model probing
 │   ├── test_raw_error.py       # Raw Gemini error diagnostics
 │   ├── test_image.jpg          # Sample currency photo
 │   ├── test_medicine.png       # Sample medicine photo (with expiry)
@@ -402,30 +420,17 @@ nigah-ai/
 
 ## Environment Variables
 
-Create a `.env` file in the project root (`.env.example` is provided as a template). The required keys depend on the run mode:
-
-**Production mode (Google Gemini endpoint):**
+Create a `.env` file in the project root (`.env.example` is provided as a template).
 
 ```
-APP_MODE=production
 GEMINI_API_KEY=your_google_gemini_api_key
-```
-
-**Development mode (default, alternate vision endpoint):**
-
-```
-TABI_API_KEY=your_dev_key_here
-TABI_BASE_URL=https://your-dev-endpoint
 ```
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `GEMINI_API_KEY` | Recommended | Google Gemini Vision API key. Without it the chain runs on the development endpoint alone; startup only fails when *no* provider is configured and `MOCK_VISION` is off |
-| `TABI_API_KEY` | Recommended | Development endpoint key, paired with `TABI_BASE_URL` |
-| `TABI_BASE_URL` | Recommended | Base URL of the development vision endpoint |
-| `APP_MODE` | Optional | `production` or `development` (default) — decides which provider the chain tries **first** (both stay wired up whenever their credentials exist) and toggles Flask debug auto-reload |
-| `MOCK_VISION` | Optional | **On by default.** Scans answer with stable labelled test data instead of failing whenever no provider can give a usable answer — because every provider is missing or failing, *or* because one answered with a reply the validators cannot use (a Cloudflare block page, a refusal sentence, an unsupported currency code), which used to reach the user as "pehchan nahi ho saki". Every mock answer announces itself — a `TEST DATA` badge on screen, a spoken Urdu notice, and an `is_mock` flag on the saved row. A photo the model genuinely cannot read (`UNCLEAR`, `NOT_CURRENCY`, `NOT_MEDICINE`, `NO_DATES`) is a judgement about the photo, not a service failure, so it keeps its own rescan guidance and is never replaced by test data. Set `MOCK_VISION=0` to make a deployment strict again and speak the service-down message |
+| `GEMINI_API_KEY` | **Required** | Google Gemini Vision API key. It is the only vision provider, so `gemini_client.py` raises at import time without it — a process that could not answer a single scan never starts |
 | `PORT` | Optional | Server port; defaults to `5000` locally and is injected automatically by Railway in production |
+| `APP_MODE` | Optional | Only affects a local `python app.py`: setting it to `production` turns the Flask debug auto-reloader off. Railway runs gunicorn and ignores it |
 
 > **Note:** The `.env.example` file is maintained as a template; actual secrets are never committed to the repository.
 

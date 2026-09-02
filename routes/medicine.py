@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 
 import db
 import gemini_client
-from gemini_client import SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE
+from gemini_client import SCAN_FAILED_ERROR, SCAN_FAILED_VOICE
 
 MEDICINE_PROMPT = (
     "You are an expert on medicine packaging. The image may show a medicine BOX "
@@ -92,15 +92,6 @@ NO_DATES_ERROR = (
 NO_DATES_VOICE = (
     "لیبل پر تاریخیں نہیں پڑھی جا سکیں۔ آپ دوائی کا نام دوبارہ اسکین کر "
     "سکتے ہیں یا اسکپ کر سکتے ہیں۔"
-)
-
-NAME_MISSING_ERROR = (
-    "Dawai ka naam nahi parh saka. Brand name wali side camera ke samne "
-    "rakhein aur dobara koshish karein."
-)
-NAME_MISSING_VOICE = (
-    "دوائی کا نام نہیں پڑھ سکا۔ برانڈ نیم والی سائیڈ کیمرے کے سامنے "
-    "رکھیں اور دوبارہ کوشش کریں۔"
 )
 
 NO_PHOTO_ERROR = "Koi photo nahi mili. Dobara koshish karein."
@@ -360,8 +351,8 @@ def scan_failed(status=200, error=None, voice=None):
         jsonify(
             {
                 "success": False,
-                "error": error or "Scan kamyaab nahi hua. Dobara koshish karein.",
-                "voice": voice or "اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔",
+                "error": error or SCAN_FAILED_ERROR,
+                "voice": voice or SCAN_FAILED_VOICE,
             }
         ),
         status,
@@ -402,18 +393,15 @@ def detect_medicine():
     meta = {}
     try:
         response_text = gemini_client.generate(
-            MEDICINE_PROMPT, image_data, mime_type, meta=meta, task="medicine"
+            MEDICINE_PROMPT, image_data, mime_type, meta=meta
         )
-        print(
-            f"[medicine] provider={meta.get('provider')} replied: {response_text!r}",
-            flush=True,
-        )
+        print(f"[medicine] google replied: {response_text!r}", flush=True)
     except Exception as error:
         print(
             f"[medicine] VISION API FAILURE ({type(error).__name__}): {error}",
             flush=True,
         )
-        return scan_failed(503, SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE)
+        return scan_failed(503, SCAN_FAILED_ERROR, SCAN_FAILED_VOICE)
 
     lines = [line.strip() for line in response_text.strip().splitlines() if line.strip()]
 
@@ -425,21 +413,16 @@ def detect_medicine():
 
     name = clean_name(lines[0])
     if name is None:
+        # The call succeeded but the answer carries no usable name - a bare
+        # strength, or a sentence apologising for not being able to read the
+        # pack. Saving or speaking either would tell a blind user something
+        # false about the medicine in their hand, so the scan simply fails.
         print(
             f"[medicine] GUARD REJECTED name line {lines[0]!r} "
             f"(strength_only={_is_strength_only(lines[0])}, len={len(lines[0])})",
             flush=True,
         )
-        # The call succeeded but the answer carries no usable name - a bare
-        # strength, or a sentence apologising for not being able to read the pack.
-        # Fall through to labelled test data rather than failing the scan; `lines`
-        # is reassigned so read_dates() below picks up the mock's dates too.
-        fallback = gemini_client.mock_reply("medicine", meta)
-        if fallback is not None:
-            lines = [line.strip() for line in fallback.splitlines() if line.strip()]
-            name = clean_name(lines[0])
-    if name is None:
-        return scan_failed(200, NAME_MISSING_ERROR, NAME_MISSING_VOICE)
+        return scan_failed(200, SCAN_FAILED_ERROR, SCAN_FAILED_VOICE)
 
     expiry_date, mfg_date = read_dates(lines[1:])
     status = medicine_status(expiry_date)
@@ -450,7 +433,6 @@ def detect_medicine():
         status,
         expiry_date.isoformat() if expiry_date else None,
         mfg_date.isoformat() if mfg_date else None,
-        is_mock=bool(meta.get("mock")),
     )
     if item_id is None:
         print(f"[medicine] DB FAILURE: {name!r} was not saved", flush=True)
@@ -466,8 +448,6 @@ def detect_medicine():
             "expiry_date": expiry_date.isoformat() if expiry_date else None,
             "mfg_date": mfg_date.isoformat() if mfg_date else None,
             "provider": meta.get("provider"),
-            "mock": bool(meta.get("mock")),
-            **gemini_client.mock_fields(meta),
         }
     )
 
@@ -482,19 +462,15 @@ def detect_label(image_data, mime_type):
     meta = {}
     try:
         response_text = gemini_client.generate(
-            LABEL_PROMPT, image_data, mime_type, meta=meta, task="label"
+            LABEL_PROMPT, image_data, mime_type, meta=meta
         )
-        print(
-            f"[medicine] label provider={meta.get('provider')} replied: "
-            f"{response_text!r}",
-            flush=True,
-        )
+        print(f"[medicine] label google replied: {response_text!r}", flush=True)
     except Exception as error:
         print(
             f"[medicine] label VISION API FAILURE ({type(error).__name__}): {error}",
             flush=True,
         )
-        return scan_failed(503, SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE)
+        return scan_failed(503, SCAN_FAILED_ERROR, SCAN_FAILED_VOICE)
 
     lines = [line.strip() for line in response_text.strip().splitlines() if line.strip()]
 
@@ -505,21 +481,14 @@ def detect_label(image_data, mime_type):
     # labels them explicitly is still read correctly.
     expiry_date, mfg_date = read_dates(lines, second_is_mfg=True)
     if expiry_date is None and mfg_date is None:
-        print(f"[medicine] label REJECTED: no usable dates in {lines!r}", flush=True)
         # A reply that carried only a batch number, or nothing readable, has
-        # failed the scan just as surely as a timeout - fall through to labelled
-        # test data so the two-step flow stays demonstrable through an outage.
-        fallback = gemini_client.mock_reply("label", meta)
-        if fallback is not None:
-            expiry_date, mfg_date = read_dates(
-                [line.strip() for line in fallback.splitlines() if line.strip()],
-                second_is_mfg=True,
-            )
-    if expiry_date is None and mfg_date is None:
-        return scan_failed(200, NO_DATES_ERROR, NO_DATES_VOICE)
+        # nothing to merge into the saved row. Guessing a date would be worse
+        # than no date: a fabricated "safe" expiry on an expired medicine is
+        # the one mistake this app cannot make.
+        print(f"[medicine] label REJECTED: no usable dates in {lines!r}", flush=True)
+        return scan_failed(200, SCAN_FAILED_ERROR, SCAN_FAILED_VOICE)
 
     status = medicine_status(expiry_date) if expiry_date else None
-    is_mock = bool(meta.get("mock"))
 
     if item_id is not None:
         row = db.get_item(item_id)
@@ -529,23 +498,14 @@ def detect_label(image_data, mime_type):
                 flush=True,
             )
             return scan_failed(500)
-        if is_mock and not row["is_mock"]:
-            # Synthetic dates must never overwrite dates read from a real pack:
-            # a fabricated "safe" expiry on an expired medicine is the one
-            # mistake this app cannot make.
-            print(
-                f"[medicine] label MOCK reply not written over real item {item_id}",
-                flush=True,
-            )
-        else:
-            # update_item() ignores None, so a label scan that only saw the
-            # manufacturing date cannot erase a previously stored expiry.
-            db.update_item(
-                item_id,
-                expiry_date=expiry_date.isoformat() if expiry_date else None,
-                mfg_date=mfg_date.isoformat() if mfg_date else None,
-                status=status,
-            )
+        # update_item() ignores None, so a label scan that only saw the
+        # manufacturing date cannot erase a previously stored expiry.
+        db.update_item(
+            item_id,
+            expiry_date=expiry_date.isoformat() if expiry_date else None,
+            mfg_date=mfg_date.isoformat() if mfg_date else None,
+            status=status,
+        )
 
     return jsonify(
         {
@@ -554,7 +514,5 @@ def detect_label(image_data, mime_type):
             "mfg_date": mfg_date.isoformat() if mfg_date else None,
             "status": status,
             "provider": meta.get("provider"),
-            "mock": is_mock,
-            **gemini_client.mock_fields(meta),
         }
     )

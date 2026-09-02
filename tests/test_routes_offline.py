@@ -4,6 +4,10 @@ The vision call is stubbed and the database is a throwaway file, so these run
 free and instantly and cannot pollute the developer's real Meri List or burn the
 20-requests/day Google free tier. Unlike a pure unit test, the routes write to a
 real SQLite file here, so "was it actually saved?" is part of what is verified.
+
+The contract under test is binary: either Google Gemini read the photo and the
+validators accept what it said, or the user is told the scan failed. There is no
+third answer, and nothing in this app may invent a note or a medicine.
 """
 import io
 import os
@@ -14,10 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-os.environ.setdefault("TABI_API_KEY", "test-tabi-key")
-os.environ.setdefault("TABI_BASE_URL", "https://tabi.invalid/v1")
+# gemini_client refuses to import without a key.
 os.environ.setdefault("GEMINI_API_KEY", "test-google-key")
-os.environ["MOCK_VISION"] = "0"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -30,12 +32,11 @@ os.unlink(_TEMP_HANDLE.name)
 db.DB_PATH = _TEMP_HANDLE.name
 
 import gemini_client
-from gemini_client import SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE
+from gemini_client import SCAN_FAILED_ERROR, SCAN_FAILED_VOICE
 import app as app_module
-from routes.currency import NOT_CURRENCY_ERROR, UNRECOGNIZED_ERROR
+from routes.currency import NOT_CURRENCY_ERROR
 from routes.currency import UNCLEAR_ERROR as CURRENCY_UNCLEAR_ERROR
 from routes.medicine import (
-    NAME_MISSING_ERROR,
     NOT_MEDICINE_ERROR,
     NO_DATES_ERROR,
     UNCLEAR_ERROR,
@@ -52,22 +53,41 @@ def check(name):
     return decorate
 
 
+# Every field any endpoint is allowed to return, and every column a Meri List
+# row is allowed to carry. Anything outside these was not read from a photo.
+RESPONSE_KEYS = {
+    "success",
+    "error",
+    "voice",
+    "id",
+    "provider",
+    "currency",
+    "denomination",
+    "name",
+    "voice_name",
+    "status",
+    "expiry_date",
+    "mfg_date",
+    "items",
+}
+ROW_KEYS = {"id", "type", "name", "status", "expiry_date", "mfg_date", "timestamp"}
+
+
 class Stub:
     """Stand-in for gemini_client.generate."""
 
-    def __init__(self, reply=None, error=None, provider="tabi", mock=False):
+    def __init__(self, reply=None, error=None, provider="google"):
         self.reply = reply
         self.error = error
         self.provider = provider
-        self.mock = mock
         self.calls = []
 
-    def __call__(self, prompt, image_data=None, mime_type="image/jpeg", meta=None, task=None):
-        self.calls.append({"task": task, "prompt": prompt, "bytes": len(image_data or b"")})
+    def __call__(self, prompt, image_data=None, mime_type="image/jpeg", meta=None):
+        self.calls.append({"prompt": prompt, "bytes": len(image_data or b"")})
         if isinstance(meta, dict):
+            meta.clear()
             meta["provider"] = self.provider
-            meta["mock"] = self.mock
-            meta["attempts"] = []
+            meta["seconds"] = 1.0
         if self.error is not None:
             raise self.error
         return self.reply
@@ -82,43 +102,18 @@ def install(stub):
 
 
 def outage():
-    """Simulate a total upstream outage on the REAL chain.
+    """Break the REAL client, below the route boundary.
 
-    Unlike install(), nothing is stubbed at the route boundary: generate() runs
-    its own loop, finds every provider failing, and falls through to the mock
-    reply - so the mock answer is parsed and validated exactly like a real one.
+    Nothing is stubbed here: generate() runs its own retry loop, the transport
+    raises, and the client has to turn that into VisionUnavailable so the route
+    answers with the honest failure instead of a fabricated result.
     """
     def down(*args):
-        raise RuntimeError("provider is down")
+        raise RuntimeError("transport is down")
 
-    saved = (gemini_client._PROVIDER_CALLS, gemini_client.MOCK_VISION)
-    gemini_client._PROVIDER_CALLS = {name: down for name in gemini_client.PROVIDERS}
-    gemini_client.MOCK_VISION = True
-
-    def restore():
-        gemini_client._PROVIDER_CALLS, gemini_client.MOCK_VISION = saved
-
-    return restore
-
-
-def answering(reply):
-    """Simulate a provider that ANSWERS with text the validators cannot use.
-
-    A flaky upstream does not always time out: TabiAI behind Cloudflare has
-    returned an HTML block page and a model has returned a refusal sentence. The
-    call succeeds, so generate() never reaches its own mock tail - the route has
-    to notice the answer is unusable. MOCK_VISION is forced on for the duration
-    because this suite pins it off at import.
-    """
-    restore_stub = install(Stub(reply=reply))
-    saved_mock = gemini_client.MOCK_VISION
-    gemini_client.MOCK_VISION = True
-
-    def restore():
-        restore_stub()
-        gemini_client.MOCK_VISION = saved_mock
-
-    return restore
+    saved = gemini_client._call_google
+    gemini_client._call_google = down
+    return lambda: setattr(gemini_client, "_call_google", saved)
 
 
 def client():
@@ -142,9 +137,28 @@ def reset_db():
         conn.close()
 
 
+def assert_honest_failure(response, expected_error=SCAN_FAILED_ERROR, expected_voice=None):
+    """The one acceptable shape for any scan this app cannot really answer."""
+    body = response.get_json()
+    assert body["success"] is False, body
+    assert body["error"] == expected_error, body
+    if expected_voice is None:
+        # The on-screen line is Roman Urdu, the spoken line Urdu script; a route
+        # that returned one for both would leave the screen reader silent.
+        voice = body["voice"]
+        assert voice and voice != body["error"], body
+        assert any("\u0600" <= char <= "\u06ff" for char in voice), body
+    else:
+        assert body["voice"] == expected_voice, body
+    # A failed scan has nothing to report, so no result fields may leak in.
+    for key in ("denomination", "currency", "name", "expiry_date", "mfg_date"):
+        assert key not in body, body
+    return body
+
+
 # ---------------------------------------------------------------- currency ---
 
-@check("currency: a valid note is reported and saved to Meri List")
+@check("currency: a valid Pakistani note is reported and saved to Meri List")
 def t_currency_saved():
     reset_db()
     stub = Stub(reply="PKR\n200")
@@ -156,9 +170,8 @@ def t_currency_saved():
         assert body["success"] is True, body
         assert body["denomination"] == "200", body
         assert body["currency"] == "PKR", body
-        assert body["provider"] == "tabi", body
-        assert body["mock"] is False, body
-        assert stub.calls[0]["task"] == "currency", stub.calls
+        assert body["provider"] == "google", body
+        assert stub.calls[0]["bytes"] > 0, stub.calls
 
         rows = db.get_items()
         assert len(rows) == 1, rows
@@ -188,41 +201,74 @@ def t_currency_new_denominations():
 @check("currency: a sloppier reply shape is still read")
 def t_currency_sloppy_reply():
     reset_db()
-    restore = install(Stub(reply="Line 1: PKR\nLine 2: 1,000"))
-    try:
-        body = upload("/detect-currency").get_json()
-        assert body["success"] is True, body
-        assert body["denomination"] == "1000", body
-    finally:
-        restore()
+    for reply, expected in (
+        ("Line 1: PKR\nLine 2: 1,000", "1000"),
+        ("PKR 500", "500"),
+        ("Rs. 50", "50"),
+        ("This is a Pakistani 100 rupee note", "100"),
+    ):
+        restore = install(Stub(reply=reply))
+        try:
+            body = upload("/detect-currency").get_json()
+            assert body["success"] is True, (reply, body)
+            assert body["denomination"] == expected, (reply, body)
+        finally:
+            restore()
 
 
 @check("currency: an impossible denomination is refused and not saved")
 def t_currency_invalid_denomination():
     reset_db()
-    restore = install(Stub(reply="PKR\n300"))
-    try:
-        response = upload("/detect-currency")
-        assert response.status_code == 200, response.status_code
-        body = response.get_json()
-        assert body["success"] is False, body
-        assert body["error"] == UNRECOGNIZED_ERROR, body
-        assert db.get_items() == [], "a refused scan must not be saved"
-    finally:
-        restore()
+    for reply in ("PKR\n300", "PKR\n0", "PKR\n12345", "PKR"):
+        restore = install(Stub(reply=reply))
+        try:
+            response = upload("/detect-currency")
+            assert response.status_code == 200, (reply, response.status_code)
+            assert_honest_failure(response)
+        finally:
+            restore()
+    assert db.get_items() == [], "a refused scan must not be saved"
+
+
+@check("currency: a foreign note is never reported as Pakistani")
+def t_currency_pkr_only():
+    """Scope is PKR only. Calling an Indian or US note 'Rs. 500' would itself be
+    a fabricated answer, so a foreign marker always defeats a bare 'rupee'."""
+    reset_db()
+    for reply in (
+        "INR\n500",
+        "USD\n100",
+        "GBP\n20",
+        "EUR\n50",
+        "Indian Rupee 500",
+        "Rs. 500 Indian currency note",
+        "OTHER\n500",
+        "500 dollars",
+    ):
+        restore = install(Stub(reply=reply))
+        try:
+            response = upload("/detect-currency")
+            assert response.status_code == 200, (reply, response.status_code)
+            assert_honest_failure(response)
+        finally:
+            restore()
+    assert db.get_items() == [], "no foreign note may be saved as PKR"
 
 
 @check("currency: UNCLEAR / NOT_CURRENCY keep their own messages")
 def t_currency_sentinels():
     reset_db()
-    for reply, expected in (("UNCLEAR", None), ("NOT_CURRENCY", NOT_CURRENCY_ERROR)):
+    for reply, expected in (
+        ("UNCLEAR", CURRENCY_UNCLEAR_ERROR),
+        ("NOT_CURRENCY", NOT_CURRENCY_ERROR),
+    ):
         restore = install(Stub(reply=reply))
         try:
-            body = upload("/detect-currency").get_json()
-            assert body["success"] is False, body
-            if expected:
-                assert body["error"] == expected, body
-            assert body["voice"], body
+            response = upload("/detect-currency")
+            assert response.status_code == 200, (reply, response.status_code)
+            # The sentinel is the model's real verdict about the photo, so it
+            # keeps its own message - but it is still a failure.
+            assert_honest_failure(response, expected)
         finally:
             restore()
     assert db.get_items() == []
@@ -230,24 +276,37 @@ def t_currency_sentinels():
 
 # ----------------------------------------------------------------- failures ---
 
-@check("both providers down: 503 with the spoken service message, nothing saved")
+@check("the real client failing gives a 503 and the honest Urdu message")
 def t_service_down():
     reset_db()
-    error = gemini_client.VisionUnavailable(
-        "no vision provider succeeded (tabi=RuntimeError, google=ResourceExhausted)"
-    )
-    for path, task in (("/detect-currency", "currency"), ("/detect-medicine", "medicine")):
+    restore = outage()
+    try:
+        for path, extra in (
+            ("/detect-currency", None),
+            ("/detect-medicine", None),
+            ("/detect-medicine", {"scan_type": "label", "item_id": "1"}),
+        ):
+            response = upload(path, extra)
+            assert response.status_code == 503, (path, extra, response.status_code)
+            assert_honest_failure(response, SCAN_FAILED_ERROR, SCAN_FAILED_VOICE)
+    finally:
+        restore()
+    assert db.get_items() == [], "a failed scan must never create a row"
+
+
+@check("VisionUnavailable from any layer is the same honest failure")
+def t_vision_unavailable_is_uniform():
+    reset_db()
+    error = gemini_client.VisionUnavailable("google gemini failed (DeadlineExceeded)")
+    for path in ("/detect-currency", "/detect-medicine"):
         restore = install(Stub(error=error))
         try:
             response = upload(path)
             assert response.status_code == 503, (path, response.status_code)
-            body = response.get_json()
-            assert body["success"] is False, body
-            assert body["error"] == SERVICE_DOWN_ERROR, body
-            assert body["voice"] == SERVICE_DOWN_VOICE, body
+            assert_honest_failure(response)
         finally:
             restore()
-    assert db.get_items() == [], "a failed scan must never create a row"
+    assert db.get_items() == []
 
 
 @check("missing and empty uploads get a 400, not the generic failure")
@@ -281,6 +340,7 @@ def t_medicine_saved():
         assert body["status"] == "safe", body
         assert body["expiry_date"] == "2027-03-31", body
         assert body["mfg_date"] is None, body
+        assert body["provider"] == "google", body
 
         row = db.get_item(body["id"])
         assert row["name"] == "Panadol 500mg", row
@@ -341,33 +401,44 @@ def t_medicine_expired():
         restore()
 
 
-@check("medicine: a strength-only reply is refused and not saved")
+@check("medicine: a reply with no usable name is refused and not saved")
 def t_medicine_name_guard():
     reset_db()
-    for reply in ("500mg", "500", "10mg + 1000mg", "UNKNOWN"):
+    for reply in (
+        "500mg",
+        "500",
+        "10mg + 1000mg",
+        "UNKNOWN",
+        # A refusal sentence is made of letters, so the strength and length
+        # guards let it through; it used to be SAVED as the name and spoken.
+        "sorry, the packaging text is cut off",
+        "I cannot read the medicine name from this image",
+    ):
         restore = install(Stub(reply=reply))
         try:
             response = upload("/detect-medicine")
-            assert response.status_code == 200, response.status_code
-            body = response.get_json()
-            assert body["success"] is False, (reply, body)
-            assert body["error"] == NAME_MISSING_ERROR, (reply, body)
+            assert response.status_code == 200, (reply, response.status_code)
+            assert_honest_failure(response)
         finally:
             restore()
-    assert db.get_items() == [], "no bare strength may ever be saved"
+    assert db.get_items() == [], "no bare strength or refusal may ever be saved"
 
 
-@check("medicine: UNCLEAR keeps its own message")
+@check("medicine: UNCLEAR / NOT_MEDICINE keep their own messages")
 def t_medicine_unclear():
     reset_db()
-    restore = install(Stub(reply="UNCLEAR"))
-    try:
-        body = upload("/detect-medicine").get_json()
-        assert body["success"] is False, body
-        assert body["error"] == UNCLEAR_ERROR, body
-        assert db.get_items() == []
-    finally:
-        restore()
+    for reply, expected in (
+        ("UNCLEAR", UNCLEAR_ERROR),
+        ("NOT_MEDICINE", NOT_MEDICINE_ERROR),
+    ):
+        restore = install(Stub(reply=reply))
+        try:
+            response = upload("/detect-medicine")
+            assert response.status_code == 200, (reply, response.status_code)
+            assert_honest_failure(response, expected)
+        finally:
+            restore()
+    assert db.get_items() == []
 
 
 # ------------------------------------------------------------- label scan ---
@@ -432,7 +503,7 @@ def t_label_scan_keeps_expiry():
     assert row["mfg_date"] == "2024-01-15", row
 
 
-@check("label scan: no dates at all is a refusal, not a silent success")
+@check("label scan: no usable dates is a refusal, not a silent success")
 def t_label_scan_no_dates():
     reset_db()
     restore = install(Stub(reply="Panadol 500mg\n2027-03-31"))
@@ -441,17 +512,42 @@ def t_label_scan_no_dates():
     finally:
         restore()
 
-    for reply in ("NO_DATES", "Batch: 45452", "nothing readable"):
+    # NO_DATES is the model's verdict about the photo; the other two are replies
+    # it produced that carry no date at all. Both must fail, neither may guess.
+    for reply, expected in (
+        ("NO_DATES", NO_DATES_ERROR),
+        ("Batch: 45452", SCAN_FAILED_ERROR),
+        ("nothing readable", SCAN_FAILED_ERROR),
+    ):
         restore = install(Stub(reply=reply))
         try:
-            body = upload(
+            response = upload(
                 "/detect-medicine", extra={"scan_type": "label", "item_id": str(item_id)}
-            ).get_json()
-            assert body["success"] is False, (reply, body)
-            assert body["error"] == NO_DATES_ERROR, (reply, body)
+            )
+            assert response.status_code == 200, (reply, response.status_code)
+            assert_honest_failure(response, expected)
         finally:
             restore()
-    assert db.get_item(item_id)["expiry_date"] == "2027-03-31"
+
+    row = db.get_item(item_id)
+    assert row["expiry_date"] == "2027-03-31", row
+    assert row["mfg_date"] is None, row
+    assert row["status"] == "safe", row
+
+
+@check("label scan: a missing item is a 500, never an invented success")
+def t_label_scan_missing_item():
+    reset_db()
+    restore = install(Stub(reply="2027-03-31\n2024-01-15"))
+    try:
+        response = upload(
+            "/detect-medicine", extra={"scan_type": "label", "item_id": "999"}
+        )
+        assert response.status_code == 500, response.status_code
+        assert response.get_json()["success"] is False, response.get_json()
+    finally:
+        restore()
+    assert db.get_items() == []
 
 
 # ------------------------------------------------------------- meri list ---
@@ -483,146 +579,54 @@ def t_meri_list():
     assert client().delete(f"/meri-list/{item_id}").status_code == 404
 
 
-@check("the mock provider is flagged in the response, never silent")
-def t_mock_flag_reaches_client():
+@check("no API response can carry a field this app cannot honestly fill")
+def t_response_surface():
+    """Pinned to an allowlist rather than a denylist: if an endpoint ever grows
+    a field that lets a scan report something the model did not read, this fails
+    until the author looks at it."""
     reset_db()
-    restore = install(Stub(reply="PKR\n500", provider="mock", mock=True))
+    responses = []
+    restore = install(Stub(reply="PKR\n1000"))
     try:
-        body = upload("/detect-currency").get_json()
-        assert body["success"] is True, body
-        assert body["mock"] is True, body
-        assert body["provider"] == "mock", body
-        assert body["mock_notice"] == gemini_client.MOCK_NOTICE_TEXT, body
-        assert body["mock_voice"] == gemini_client.MOCK_NOTICE_VOICE, body
-        assert db.get_item(body["id"])["is_mock"] == 1, "the row must stay marked"
+        responses.append(upload("/detect-currency"))
     finally:
         restore()
-
-
-@check("a total outage answers with valid labelled data instead of a 503")
-def t_outage_never_503s():
-    reset_db()
+    restore = install(Stub(reply="Panadol 500mg\n2027-03-31"))
+    try:
+        responses.append(upload("/detect-medicine"))
+    finally:
+        restore()
     restore = outage()
     try:
-        currency = upload("/detect-currency")
-        assert currency.status_code == 200, currency.status_code
-        body = currency.get_json()
-        assert body["success"] is True, body
-        assert body["currency"] == "PKR", body
-        assert body["denomination"] == "1000", body
-        assert body["mock"] is True and body["mock_notice"], body
-
-        medicine = upload("/detect-medicine")
-        assert medicine.status_code == 200, medicine.status_code
-        body = medicine.get_json()
-        assert body["success"] is True, body
-        assert body["name"] == "Panadol 500mg", body
-        # Both dates have to survive the real parsers, or a mock scan would
-        # never exercise the mfg half of the UI and the database.
-        assert body["expiry_date"], body
-        assert body["mfg_date"], body
-        assert body["status"] == "safe", body
-        assert body["mock_notice"], body
-
-        label = upload(
-            "/detect-medicine",
-            extra={"scan_type": "label", "item_id": str(body["id"])},
-        )
-        assert label.status_code == 200, label.status_code
-        assert label.get_json()["success"] is True, label.get_json()
-        assert label.get_json()["mock_notice"], label.get_json()
-
-        rows = db.get_items()
-        assert [row["is_mock"] for row in rows] == [1, 1], rows
+        responses.append(upload("/detect-currency"))
+        responses.append(upload("/detect-medicine"))
     finally:
         restore()
+    responses.append(client().get("/meri-list"))
+    responses.append(client().get("/health"))
 
-
-@check("a mock label scan cannot overwrite dates read from a real pack")
-def t_mock_label_spares_real_row():
-    reset_db()
-    restore = install(Stub(reply="Panadol 500mg\n2024-01-15"))
-    try:
-        item_id = upload("/detect-medicine").get_json()["id"]
-    finally:
-        restore()
-    real = db.get_item(item_id)
-    assert real["is_mock"] == 0 and real["status"] == "expired", real
-
-    restore = outage()
-    try:
-        body = upload(
-            "/detect-medicine",
-            extra={"scan_type": "label", "item_id": str(item_id)},
-        ).get_json()
-        assert body["success"] is True, body
-        assert body["mock"] is True and body["mock_notice"], body
-    finally:
-        restore()
-
-    # A fabricated "safe" expiry on an expired medicine is the one mistake this
-    # app cannot make, so the synthetic dates are reported but never stored.
-    row = db.get_item(item_id)
-    assert row["status"] == "expired", row
-    assert row["expiry_date"] == "2024-01-15", row
-    assert row["mfg_date"] is None, row
-
-
-@check("a provider that answers with an unusable reply still falls back to test data")
-def t_junk_reply_falls_back():
-    reset_db()
-
-    restore = answering("THB\n500")
-    try:
-        response = upload("/detect-currency")
-        assert response.status_code == 200, response.status_code
+    for response in responses:
+        text = response.get_data(as_text=True)
+        for badge in ("TEST DATA", "asli pehchan nahi hui"):
+            assert badge not in text, (badge, text)
+        if not text.startswith("{"):
+            continue  # /health is plain text
         body = response.get_json()
-        assert body["success"] is True, body
-        assert (body["currency"], body["denomination"]) == ("PKR", "1000"), body
-        assert body["mock"] is True and body["provider"] == "mock", body
-        assert body["mock_notice"] == gemini_client.MOCK_NOTICE_TEXT, body
-        assert body["mock_voice"] == gemini_client.MOCK_NOTICE_VOICE, body
-    finally:
-        restore()
-
-    # A refusal sentence is made of letters, so the strength and length guards
-    # let it through; it used to be SAVED as the name and spoken as a drug.
-    restore = answering("sorry, the packaging text is cut off")
-    try:
-        body = upload("/detect-medicine").get_json()
-        assert body["success"] is True, body
-        assert body["name"] == "Panadol 500mg", body
-        assert body["expiry_date"], body
-        assert body["mfg_date"], body
-        assert body["status"] == "safe", body
-        assert body["mock"] is True and body["mock_notice"], body
-        item_id = body["id"]
-    finally:
-        restore()
-
-    restore = answering("Batch: 45452")
-    try:
-        body = upload(
-            "/detect-medicine", extra={"scan_type": "label", "item_id": str(item_id)}
-        ).get_json()
-        assert body["success"] is True, body
-        assert body["expiry_date"] and body["mfg_date"], body
-        assert body["mock_notice"], body
-    finally:
-        restore()
-
-    # Nothing here was a real detection, so every row has to say so.
-    rows = db.get_items()
-    assert [row["is_mock"] for row in rows] == [1, 1], rows
-    names = sorted(row["name"] for row in rows)
-    assert names == ["Panadol 500mg", "Rs. 1000"], names
+        keys = set(body)
+        if "items" in keys:
+            for row in body["items"]:
+                assert set(row) <= ROW_KEYS, (set(row) - ROW_KEYS, row)
+            keys -= {"items"}
+        assert keys <= RESPONSE_KEYS, (keys - RESPONSE_KEYS, body)
+        if body.get("success") and "provider" in body:
+            assert body["provider"] == "google", body
 
 
-@check("photo sentinels keep their own message and are never replaced by test data")
-def t_sentinels_survive_mock():
+@check("photo sentinels keep their own message and are never a fake result")
+def t_sentinels_stay_failures():
     """UNCLEAR / NOT_CURRENCY / NOT_MEDICINE / NO_DATES are the model's judgement
-    about the PHOTO, not a service failure. Inventing a note the user is not
-    holding would be worse than asking them to rescan, so these stay failures."""
+    about the PHOTO, not a service failure. They still have to be failures:
+    inventing a note the user is not holding is worse than asking for a rescan."""
     reset_db()
     cases = (
         ("/detect-currency", None, "UNCLEAR", CURRENCY_UNCLEAR_ERROR),
@@ -632,28 +636,24 @@ def t_sentinels_survive_mock():
         ("/detect-medicine", {"scan_type": "label"}, "NO_DATES", NO_DATES_ERROR),
     )
     for path, extra, reply, expected in cases:
-        restore = answering(reply)
+        restore = install(Stub(reply=reply))
         try:
             response = upload(path, extra)
             assert response.status_code == 200, (reply, response.status_code)
-            body = response.get_json()
-            assert body["success"] is False, (reply, body)
-            assert body["error"] == expected, (reply, body)
-            assert body["voice"], (reply, body)
-            assert "mock_notice" not in body, (reply, body)
+            assert_honest_failure(response, expected)
         finally:
             restore()
     assert db.get_items() == [], "a photo the model could not read must not create a row"
 
 
-@check("/health reports the whole chain")
+@check("/health reports one provider, the model and no fallback")
 def t_health():
     body = client().get("/health")
     assert body.status_code == 200, body.status_code
     text = body.get_data(as_text=True)
-    assert "providers=" in text, text
-    # This suite pins MOCK_VISION=0 at import; a normal process defaults to on.
-    assert "mock=off" in text, text
+    assert "provider=google" in text, text
+    assert "model=gemini-3.6-flash" in text, text
+    assert "fallback=none" in text, text
 
 
 def main():

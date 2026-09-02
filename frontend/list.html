@@ -106,12 +106,6 @@
         time.className = 'item-time';
         time.textContent = formatTime(item.timestamp);
         info.appendChild(name);
-        if (item.is_mock) {
-          var mockTag = document.createElement('p');
-          mockTag.className = 'mock-tag';
-          mockTag.textContent = 'TEST DATA — asli pehchan nahi hui';
-          info.appendChild(mockTag);
-        }
         info.appendChild(time);
 
         var datesText = formatItemDates(item);

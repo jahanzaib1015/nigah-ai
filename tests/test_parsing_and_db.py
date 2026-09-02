@@ -13,16 +13,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-os.environ.setdefault("TABI_API_KEY", "test-tabi-key")
-os.environ.setdefault("TABI_BASE_URL", "https://tabi.invalid/v1")
 os.environ.setdefault("GEMINI_API_KEY", "test-google-key")
-os.environ["MOCK_VISION"] = "0"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import db
-from routes.currency import KNOWN_CURRENCIES, VALID_DENOMINATIONS, parse_reply
+from routes.currency import VALID_DENOMINATIONS, _validated, is_pkr
 from routes.medicine import (
     clean_name,
     medicine_status,
@@ -45,29 +42,25 @@ def check(name):
 
 # ---------------------------------------------------------------- currency ---
 
-# Every one of these is a note the user was actually holding; each used to be
-# rejected unless the model happened to use the exact two-bare-lines shape.
+# Every one of these is a Pakistani note the user was actually holding; each
+# used to be rejected unless the model happened to use the exact two-bare-lines
+# shape. The value is the denomination the route will announce and save.
 CURRENCY_ACCEPTED = [
-    ("PKR\n500", ("PKR", "500")),
-    ("PKR\n1000", ("PKR", "1000")),
-    ("PKR 500", ("PKR", "500")),
-    ("PKR500", ("PKR", "500")),
-    ("Rs. 500", ("PKR", "500")),
-    ("Rs 200", ("PKR", "200")),
-    ("Line 1: PKR\nLine 2: 500", ("PKR", "500")),
-    ("1. PKR\n2. 100", ("PKR", "100")),
-    ("PKR\n1,000", ("PKR", "1000")),
-    ("This is a Pakistani 500 rupee note", ("PKR", "500")),
-    ("A 2015 series 500 rupee note", ("PKR", "500")),
-    ("PKR\n75", ("PKR", "75")),
-    ("PKR\n5", ("PKR", "5")),
-    ("USD\n100", ("USD", "100")),
-    ("GBP\n20", ("GBP", "20")),
-    ("EUR\n50", ("EUR", "50")),
-    ("Indian Rupee\n500", ("INR", "500")),
-    ("OTHER\n250", ("OTHER", "250")),
-    ("  PKR  \n  500  ", ("PKR", "500")),
-    ("PKR\n500\n(note is slightly worn)", ("PKR", "500")),
+    ("PKR\n500", "500"),
+    ("PKR\n1000", "1000"),
+    ("PKR 500", "500"),
+    ("PKR500", "500"),
+    ("Rs. 500", "500"),
+    ("Rs 200", "200"),
+    ("Line 1: PKR\nLine 2: 500", "500"),
+    ("1. PKR\n2. 100", "100"),
+    ("PKR\n1,000", "1000"),
+    ("This is a Pakistani 500 rupee note", "500"),
+    ("A 2015 series 500 rupee note", "500"),
+    ("PKR\n75", "75"),
+    ("PKR\n5", "5"),
+    ("  PKR  \n  500  ", "500"),
+    ("PKR\n500\n(note is slightly worn)", "500"),
 ]
 
 CURRENCY_REJECTED = [
@@ -82,40 +75,62 @@ CURRENCY_REJECTED = [
     "PKR\n0",
 ]
 
+# Scope is Pakistani rupees only. Announcing a foreign note as "Rs. 500" would
+# be a fabricated answer, so these all have to be refused.
+FOREIGN_REJECTED = [
+    "USD\n100",
+    "GBP\n20",
+    "EUR\n50",
+    "INR\n500",
+    "Indian Rupee\n500",
+    "OTHER\n250",
+    "500 dollars",
+    "20 pound note",
+    "Rs. 500 Indian currency note",
+    "PKR 500 or USD 100",
+]
+
 
 def route_would_accept(reply):
     """Mirror the checks detect_currency applies before it saves a scan."""
-    currency, denomination = parse_reply(reply)
-    if currency not in KNOWN_CURRENCIES:
-        return False
-    if not denomination or not denomination.isdigit():
-        return False
-    if len(denomination) > 5:
-        return False
-    if currency == "PKR" and denomination not in VALID_DENOMINATIONS:
-        return False
-    return True
+    denomination, reason = _validated(reply)
+    return reason is None and denomination in VALID_DENOMINATIONS
 
 
-@check("currency: real replies parse in every shape the model uses")
+@check("currency: real Pakistani replies parse in every shape the model uses")
 def t_currency_accepted():
     for reply, expected in CURRENCY_ACCEPTED:
-        assert parse_reply(reply) == expected, f"{reply!r} -> {parse_reply(reply)!r}"
+        assert _validated(reply) == (expected, None), f"{reply!r} -> {_validated(reply)!r}"
         assert route_would_accept(reply), f"{reply!r} would be refused by the route"
 
 
-@check("currency: junk and non-notes are refused, not saved")
+@check("currency: junk and impossible notes are refused, not saved")
 def t_currency_rejected():
     for reply in CURRENCY_REJECTED:
         assert not route_would_accept(reply), (
-            f"{reply!r} would be accepted as {parse_reply(reply)!r}"
+            f"{reply!r} would be accepted as {_validated(reply)!r}"
         )
+
+
+@check("currency: a foreign note is never announced as Pakistani rupees")
+def t_currency_pkr_only():
+    for reply in FOREIGN_REJECTED:
+        assert not is_pkr(reply), f"{reply!r} was read as a Pakistani note"
+        assert not route_would_accept(reply), (
+            f"{reply!r} would be accepted as {_validated(reply)!r}"
+        )
+    # A bare "rupee"/"Rs." is Pakistani in this app's locale, but only when
+    # nothing else in the reply says otherwise.
+    assert is_pkr("Rs. 500"), "a plain rupee note must still be readable"
+    assert is_pkr("PKR 500")
+    assert not is_pkr("Indian rupee 500")
+    assert not is_pkr("USD 100")
 
 
 @check("currency: 10000 is not read as a valid 1000 note")
 def t_no_truncation():
-    currency, denomination = parse_reply("PKR\n10000")
-    assert denomination not in VALID_DENOMINATIONS, (currency, denomination)
+    denomination, reason = _validated("PKR\n10000")
+    assert denomination is None and reason, (denomination, reason)
 
 
 @check("currency: every circulating PKR note is accepted")
@@ -124,7 +139,7 @@ def t_pkr_denominations():
     # announced as unrecognised even when read correctly.
     for expected in ("5", "10", "20", "50", "75", "100", "200", "500", "1000", "5000"):
         assert expected in VALID_DENOMINATIONS, expected
-        assert parse_reply(f"PKR\n{expected}") == ("PKR", expected), expected
+        assert _validated(f"PKR\n{expected}") == (expected, None), expected
     for bogus in ("300", "1500", "25", "0"):
         assert bogus not in VALID_DENOMINATIONS, bogus
 
@@ -378,7 +393,18 @@ def t_db_column_whitelist():
         db.DB_PATH = saved
 
 
-@check("db: an existing table gains mfg_date and is_mock without losing its rows")
+EXPECTED_COLUMNS = {
+    "id",
+    "type",
+    "name",
+    "status",
+    "expiry_date",
+    "mfg_date",
+    "timestamp",
+}
+
+
+@check("db: an old table gains mfg_date without losing its rows")
 def t_db_migration():
     saved = db.DB_PATH
     path = _temp_db()
@@ -405,22 +431,45 @@ def t_db_migration():
         conn.commit()
         conn.close()
 
-        db.init_db()  # must add the columns, not rebuild or drop anything
+        db.init_db()  # must add the column, not rebuild or drop anything
         rows = db.get_items()
         assert len(rows) == 1, rows
         assert rows[0]["name"] == "Old Row 500mg", rows
         assert rows[0]["expiry_date"] == "2027-01-01", rows
         assert rows[0]["mfg_date"] is None, rows
-        # History saved before mock replies existed was all real detection; the
-        # DEFAULT has to say so, or Meri List would tag it as test data.
-        assert rows[0]["is_mock"] == 0, rows
 
         new_id = db.add_item("medicine", "New Row 250mg", "unknown", None, "2024-05-05")
         assert db.get_item(new_id)["mfg_date"] == "2024-05-05"
-        assert db.get_item(new_id)["is_mock"] == 0
-        mock_id = db.add_item("currency", "Rs. 1000", "success", is_mock=True)
-        assert db.get_item(mock_id)["is_mock"] == 1
-        assert len(db.get_items()) == 3
+        assert len(db.get_items()) == 2
+    finally:
+        db.DB_PATH = saved
+
+
+@check("db: a stored row carries nothing but what a real scan observed")
+def t_db_schema():
+    """Pinned to an allowlist rather than a denylist: Meri List is exactly what
+    the model read, so a column that could label a row as standing for something
+    else has to be added deliberately, and this fails until the author looks."""
+    saved = db.DB_PATH
+    db.DB_PATH = _temp_db()
+    try:
+        db.init_db()
+        conn = sqlite3.connect(db.DB_PATH)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(scanned_items)")}
+        conn.close()
+        assert columns == EXPECTED_COLUMNS, columns
+
+        item_id = db.add_item("currency", "Rs. 500", "success")
+        assert set(db.get_item(item_id)) == EXPECTED_COLUMNS, db.get_item(item_id)
+        assert set(db.get_items()[0]) == EXPECTED_COLUMNS, db.get_items()
+
+        try:
+            db.add_item("currency", "Rs. 500", "success", synthetic=True)
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("add_item accepted a field a real scan cannot produce")
+        assert len(db.get_items()) == 1
     finally:
         db.DB_PATH = saved
 

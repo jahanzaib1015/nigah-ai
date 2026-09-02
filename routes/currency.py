@@ -4,24 +4,25 @@ from flask import Blueprint, jsonify, request
 
 import db
 import gemini_client
-from gemini_client import SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE
+from gemini_client import SCAN_FAILED_ERROR, SCAN_FAILED_VOICE
 
 CURRENCY_PROMPT = (
-    "You are an expert on world currency notes. The image may show EITHER face "
-    "of a note - read the denomination number and written words carefully. "
+    "You are an expert on Pakistani currency notes. The image may show EITHER "
+    "face of a note - read the denomination number and the written words "
+    "carefully. "
     "If the image is blurry, dark, empty, or no recognizable object is visible, "
     "reply with exactly: UNCLEAR. "
-    "If the image is clear but does NOT show any currency note "
-    "(for example a medicine, an object, a person), reply with exactly: NOT_CURRENCY. "
-    "If it is a currency note, reply with ONLY two lines: "
-    "line 1 the currency code - PKR (Pakistani Rupee), USD (US Dollar), "
-    "GBP (British Pound), INR (Indian Rupee), EUR (Euro), or OTHER; "
+    "If the image is clear but does NOT show a Pakistani rupee note (for example "
+    "a medicine, an object, a person, or the note of another country), reply "
+    "with exactly: NOT_CURRENCY. "
+    "If it IS a Pakistani rupee note, reply with ONLY two lines: "
+    "line 1 exactly PKR; "
     "line 2 the denomination number exactly as printed (for example 500, 100, 20), "
     "with no currency symbol, no word 'rupees' and no other text on that line. "
-    "PKR notes are only issued in these denominations: 5, 10, 20, 50, 75, 100, "
-    "200, 500, 1000, 5000 - if the note is Pakistani, line 2 MUST be exactly one "
-    "of those numbers, so pick the closest one you can actually read on the note. "
-    "PKR back-side landmarks: 10 = Bab-ul-Khyber (Khyber Pass gate); "
+    "Pakistani rupee notes are only issued in these denominations: 5, 10, 20, 50, "
+    "75, 100, 200, 500, 1000, 5000 - line 2 MUST be exactly one of those numbers, "
+    "so pick the closest one you can actually read on the note. "
+    "Back-side landmarks: 10 = Bab-ul-Khyber (Khyber Pass gate); "
     "20 = Mohenjo-daro ruins; 50 = Baltit Fort, Karimabad (Hunza); "
     "100 = Islamia College, Peshawar; 500 = Badshahi Mosque, Lahore; "
     "1000 = Faisal Mosque, Islamabad; 5000 = Iqbal Mausoleum, Lahore."
@@ -42,7 +43,6 @@ VALID_DENOMINATIONS = {
     "1000",
     "5000",
 }
-KNOWN_CURRENCIES = {"PKR", "USD", "GBP", "INR", "EUR", "OTHER"}
 
 NO_PHOTO_ERROR = "Koi photo nahi mili. Dobara koshish karein."
 NO_PHOTO_VOICE = "کوئی تصویر نہیں ملی۔ دوبارہ کوشش کریں۔"
@@ -56,27 +56,24 @@ UNCLEAR_VOICE = (
     "نوٹ کو کیمرے کے سامنے سیدھا رکھیں اور دوبارہ کوشش کریں۔"
 )
 
-NOT_CURRENCY_ERROR = "Yeh currency note nahi hai. Sirf currency note ki tasveer lein."
-NOT_CURRENCY_VOICE = "یہ کرنسی نوٹ نہیں ہے۔ صرف کرنسی نوٹ کی تصویر لیں۔"
-
-# The vision call succeeded but the reply did not validate as a known note:
-# distinct from SERVICE_DOWN_*, which means the call itself never returned.
-UNRECOGNIZED_ERROR = (
-    "Currency note ki pehchan nahi ho saki. Note ko saaf side camera ke "
-    "samne rakhein aur dobara koshish karein."
+NOT_CURRENCY_ERROR = (
+    "Yeh Pakistani currency note nahi hai. Sirf Pakistani note ki tasveer lein."
 )
-UNRECOGNIZED_VOICE = (
-    "کرنسی نوٹ کی پہچان نہیں ہو سکی۔ نوٹ کو صاف سائیڈ کیمرے کے سامنے "
-    "رکھیں اور دوبارہ کوشش کریں۔"
+NOT_CURRENCY_VOICE = (
+    "یہ پاکستانی کرنسی نوٹ نہیں ہے۔ صرف پاکستانی نوٹ کی تصویر لیں۔"
 )
 
 currency_bp = Blueprint("currency", __name__)
 
-# No trailing \b: "PKR500" has no boundary between the code and the number, and
-# requiring one lost the currency entirely. "Not followed by a letter" still
-# keeps "PKRS" and "OTHERS" from matching.
-_CURRENCY_CODE_RE = re.compile(
-    r"\b(PKR|USD|GBP|INR|EUR|OTHER)(?![A-Za-z])", re.IGNORECASE
+_PKR_RE = re.compile(r"\bPKR(?![A-Za-z])", re.IGNORECASE)
+_RUPEE_RE = re.compile(r"\brs\b|\brupees?\b", re.IGNORECASE)
+# Any other currency named in the reply means this is not a Pakistani note.
+# Reporting a foreign note as PKR would be a fabricated answer, so a foreign
+# marker always wins over a bare "rupee", which in this app's locale means
+# Pakistani.
+_FOREIGN_RE = re.compile(
+    r"\b(?:USD|GBP|INR|EUR|OTHER|dollar|pound|sterling|euro|indian|bharat)\b",
+    re.IGNORECASE,
 )
 # "Line 1:", "1)", "2." - models label their own lines, and those labels are
 # numbers that must not be mistaken for a denomination.
@@ -93,24 +90,11 @@ def _clean_lines(reply):
     return lines
 
 
-def detect_currency_code(text):
-    match = _CURRENCY_CODE_RE.search(text)
-    if match:
-        return match.group(1).upper()
-    lowered = text.lower()
-    if "dollar" in lowered:
-        return "USD"
-    if "pound" in lowered or "sterling" in lowered:
-        return "GBP"
-    if "euro" in lowered:
-        return "EUR"
-    # "Indian Rupee" has to be tested before the bare word "rupee", which in
-    # this app's locale means Pakistani.
-    if "indian" in lowered or "bharat" in lowered:
-        return "INR"
-    if re.search(r"\brs\b|rupee", lowered):
-        return "PKR"
-    return None
+def is_pkr(text):
+    """True when the reply identifies a Pakistani rupee note and nothing else."""
+    if _FOREIGN_RE.search(text):
+        return False
+    return bool(_PKR_RE.search(text)) or bool(_RUPEE_RE.search(text))
 
 
 def extract_denominations(text):
@@ -126,49 +110,29 @@ def extract_denominations(text):
     ]
 
 
-def parse_reply(reply):
-    """Return (currency, denomination) from whatever shape the model used.
+def _validated(reply):
+    """(denomination, None) for a readable Pakistani note, else (None, why).
 
     The prompt asks for two bare lines, but models also answer "PKR 500",
     "Rs. 500", "Line 1: PKR / Line 2: 500", or wrap the pair in a sentence.
-    Every one of those is a note the user was holding, and rejecting them used
-    to tell the user the scan had failed.
+    Every one of those is a note the user was holding, so all of them are read.
     """
     lines = _clean_lines(reply)
     if not lines:
-        return None, None
+        return None, f"empty reply {reply!r}"
     blob = " ".join(lines)
-
-    currency = detect_currency_code(blob)
+    if not is_pkr(blob):
+        return None, f"no Pakistani rupee note in {reply!r}"
     numbers = extract_denominations(blob)
     if not numbers:
-        return currency, None
-    if currency == "PKR":
-        # Prose can carry stray numbers ("a 2015 series 500 rupee note"), so
-        # prefer one that is actually a Pakistani denomination.
-        valid = [number for number in numbers if number in VALID_DENOMINATIONS]
-        return currency, (valid[0] if valid else numbers[0])
-    return currency, numbers[0]
-
-
-def _validated(reply):
-    """(currency, denomination, None) for a readable note, else (None, None, why).
-
-    Split out of the route so the labelled mock fallback can be checked by the
-    exact same rules as a provider answer.
-    """
-    currency, denomination = parse_reply(reply)
-    if currency not in KNOWN_CURRENCIES:
-        return None, None, f"no usable currency code in {reply!r}"
-    if (
-        not denomination
-        or not denomination.isdigit()
-        or len(denomination) > _MAX_DENOMINATION_LENGTH
-    ):
-        return None, None, f"no denomination for {currency} in {reply!r}"
-    if currency == "PKR" and denomination not in VALID_DENOMINATIONS:
-        return None, None, f"{denomination!r} is not a valid PKR denomination"
-    return currency, denomination, None
+        return None, f"no denomination in {reply!r}"
+    # Prose can carry stray numbers ("a 2015 series 500 rupee note"), so prefer
+    # one that is actually an issued denomination.
+    valid = [number for number in numbers if number in VALID_DENOMINATIONS]
+    denomination = valid[0] if valid else numbers[0]
+    if denomination not in VALID_DENOMINATIONS:
+        return None, f"{denomination!r} is not an issued PKR denomination"
+    return denomination, None
 
 
 def scan_failed(status=200, error=None, voice=None):
@@ -176,8 +140,8 @@ def scan_failed(status=200, error=None, voice=None):
         jsonify(
             {
                 "success": False,
-                "error": error or "Scan kamyaab nahi hua. Dobara koshish karein.",
-                "voice": voice or "اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔",
+                "error": error or SCAN_FAILED_ERROR,
+                "voice": voice or SCAN_FAILED_VOICE,
             }
         ),
         status,
@@ -206,19 +170,15 @@ def detect_currency():
     meta = {}
     try:
         reply = gemini_client.generate(
-            CURRENCY_PROMPT,
-            image_data,
-            image.mimetype or "image/jpeg",
-            meta=meta,
-            task="currency",
+            CURRENCY_PROMPT, image_data, image.mimetype or "image/jpeg", meta=meta
         )
-        print(f"[currency] provider={meta.get('provider')} replied: {reply!r}", flush=True)
+        print(f"[currency] google replied: {reply!r}", flush=True)
     except Exception as error:
         print(
             f"[currency] VISION API FAILURE ({type(error).__name__}): {error}",
             flush=True,
         )
-        return scan_failed(503, SERVICE_DOWN_ERROR, SERVICE_DOWN_VOICE)
+        return scan_failed(503, SCAN_FAILED_ERROR, SCAN_FAILED_VOICE)
 
     lines = _clean_lines(reply)
 
@@ -228,21 +188,16 @@ def detect_currency():
     if lines[0].upper() == "NOT_CURRENCY":
         return scan_failed(200, NOT_CURRENCY_ERROR, NOT_CURRENCY_VOICE)
 
-    currency, denomination, reason = _validated(reply)
+    denomination, reason = _validated(reply)
     if reason:
+        # The call succeeded but the answer is not a Pakistani note this app can
+        # report. There is nothing to fall back to: the user is told the scan
+        # failed rather than being handed an invented denomination.
         print(f"[currency] REJECTED: {reason}", flush=True)
-        # The call succeeded but the answer is unusable - a Cloudflare fragment, a
-        # refusal, a note this app does not support. That has failed the scan just
-        # as surely as a timeout, so fall through to labelled test data rather
-        # than telling a blind user the scan did not work.
-        currency, denomination, reason = _validated(
-            gemini_client.mock_reply("currency", meta)
-        )
-    if reason:
-        return scan_failed(200, UNRECOGNIZED_ERROR, UNRECOGNIZED_VOICE)
+        return scan_failed(200, SCAN_FAILED_ERROR, SCAN_FAILED_VOICE)
 
-    name = f"Rs. {denomination}" if currency == "PKR" else f"{currency} {denomination}"
-    item_id = db.add_item("currency", name, "success", is_mock=bool(meta.get("mock")))
+    name = f"Rs. {denomination}"
+    item_id = db.add_item("currency", name, "success")
     if item_id is None:
         # The note was read but the record did not land; tell the user rather
         # than showing a success card for a scan that is not in Meri List.
@@ -253,10 +208,8 @@ def detect_currency():
         {
             "id": item_id,
             "denomination": denomination,
-            "currency": currency,
+            "currency": "PKR",
             "success": True,
             "provider": meta.get("provider"),
-            "mock": bool(meta.get("mock")),
-            **gemini_client.mock_fields(meta),
         }
     )

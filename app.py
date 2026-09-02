@@ -32,9 +32,8 @@ def index():
 
 @app.route("/health")
 def health():
-    # Reports the resolved provider chain so a deployed instance can be verified
-    # from outside: which endpoint answers, and in what order, is otherwise
-    # invisible.
+    # Reports the one vision model this process will call, so a deployed
+    # instance can be verified from outside.
     return f"Nigah AI Backend Running ({gemini_client.health_summary()})"
 
 
@@ -44,7 +43,8 @@ def frontend_files(filename):
 
 
 if __name__ == "__main__":
-    # Read the mode gemini_client actually resolved, so debug auto-reload can
-    # never disagree with the provider chain it built.
+    # Production runs gunicorn (Procfile / railway.json), so this only affects a
+    # local `python app.py`: APP_MODE=production turns the debug reloader off.
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=(gemini_client.APP_MODE != "production"))
+    debug = (os.getenv("APP_MODE") or "development").strip().lower() != "production"
+    app.run(host="0.0.0.0", port=port, debug=debug)
