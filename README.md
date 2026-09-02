@@ -256,6 +256,18 @@ python tests/test_medicine_name_parsing.py
 - Covers edge cases: compound strengths, slash concentrations, spelled-out units, bare numbers, Urdu script, sentinels, whitespace, inverted strings, and over-length names.
 - **Status:** All passing.
 
+### Offline Test Suites
+```bash
+python tests/test_vision_fallback.py
+python tests/test_routes_offline.py
+python tests/test_parsing_and_db.py
+```
+No network, no API quota, no writes to the real Meri List — provider callables and the clock are injected, and the database is a throwaway file.
+
+- `test_vision_fallback.py` — **15 checks**: provider ordering per `APP_MODE`, fallback on failure, the chain budget and per-provider slice caps, the wall-clock bound that abandons a transport ignoring its own timeout, the `MOCK_VISION` default, and the notice that labels a mock answer.
+- `test_routes_offline.py` — **21 checks**: both scan routes end to end, including validation refusals, the two-step medicine label merge, Meri List read/delete, a total outage answering with labelled test data instead of a 503, and the rule that a mock label scan cannot overwrite dates read from a real pack.
+- `test_parsing_and_db.py` — **21 checks**: currency and medicine reply parsing, expiry/mfg classification, status rules, and the SQLite layer including schema migration of an existing table.
+
 ### Currency Accuracy Benchmark
 ```bash
 python tests/test_currency_accuracy.py
@@ -408,10 +420,11 @@ TABI_BASE_URL=https://your-dev-endpoint
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `GEMINI_API_KEY` | Production | Google Gemini Vision API key; startup fails without it when `APP_MODE=production` |
-| `TABI_API_KEY` | Development | Development endpoint key; required when `APP_MODE` is unset or `development` |
-| `TABI_BASE_URL` | Development | Base URL of the development vision endpoint |
-| `APP_MODE` | Optional | `production` or `development` (default) — selects the vision endpoint and toggles Flask debug auto-reload |
+| `GEMINI_API_KEY` | Recommended | Google Gemini Vision API key. Without it the chain runs on the development endpoint alone; startup only fails when *no* provider is configured and `MOCK_VISION` is off |
+| `TABI_API_KEY` | Recommended | Development endpoint key, paired with `TABI_BASE_URL` |
+| `TABI_BASE_URL` | Recommended | Base URL of the development vision endpoint |
+| `APP_MODE` | Optional | `production` or `development` (default) — decides which provider the chain tries **first** (both stay wired up whenever their credentials exist) and toggles Flask debug auto-reload |
+| `MOCK_VISION` | Optional | **On by default.** When every provider is missing or failing, scans answer with stable labelled test data instead of a 503, so the UI and database stay testable through an upstream outage. Every mock answer announces itself — a `TEST DATA` badge on screen, a spoken Urdu notice, and an `is_mock` flag on the saved row. Set `MOCK_VISION=0` to make a deployment strict again and speak the service-down message |
 | `PORT` | Optional | Server port; defaults to `5000` locally and is injected automatically by Railway in production |
 
 > **Note:** The `.env.example` file is maintained as a template; actual secrets are never committed to the repository.

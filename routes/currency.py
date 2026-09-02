@@ -235,7 +235,7 @@ def detect_currency():
         return scan_failed(200, UNRECOGNIZED_ERROR, UNRECOGNIZED_VOICE)
 
     name = f"Rs. {denomination}" if currency == "PKR" else f"{currency} {denomination}"
-    item_id = db.add_item("currency", name, "success")
+    item_id = db.add_item("currency", name, "success", is_mock=bool(meta.get("mock")))
     if item_id is None:
         # The note was read but the record did not land; tell the user rather
         # than showing a success card for a scan that is not in Meri List.
@@ -250,5 +250,6 @@ def detect_currency():
             "success": True,
             "provider": meta.get("provider"),
             "mock": bool(meta.get("mock")),
+            **gemini_client.mock_fields(meta),
         }
     )

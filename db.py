@@ -36,6 +36,7 @@ def init_db():
                 status TEXT NOT NULL,
                 expiry_date TEXT,
                 mfg_date TEXT,
+                is_mock INTEGER NOT NULL DEFAULT 0,
                 timestamp TEXT NOT NULL
             )
             """
@@ -43,6 +44,12 @@ def init_db():
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(scanned_items)")}
         if "mfg_date" not in columns:
             conn.execute("ALTER TABLE scanned_items ADD COLUMN mfg_date TEXT")
+        # Databases created before this column existed still need it; DEFAULT 0
+        # marks every already-stored row as a real detection.
+        if "is_mock" not in columns:
+            conn.execute(
+                "ALTER TABLE scanned_items ADD COLUMN is_mock INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -52,13 +59,14 @@ def _now():
     return datetime.now().isoformat(sep=" ", timespec="seconds")
 
 
-def add_item(item_type, name, status, expiry_date=None, mfg_date=None):
+def add_item(item_type, name, status, expiry_date=None, mfg_date=None, is_mock=False):
     conn = get_connection()
     try:
         cursor = conn.execute(
-            "INSERT INTO scanned_items (type, name, status, expiry_date, mfg_date, timestamp) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (item_type, name, status, expiry_date, mfg_date, _now()),
+            "INSERT INTO scanned_items "
+            "(type, name, status, expiry_date, mfg_date, is_mock, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (item_type, name, status, expiry_date, mfg_date, int(bool(is_mock)), _now()),
         )
         conn.commit()
         return cursor.lastrowid

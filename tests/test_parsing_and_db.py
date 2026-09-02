@@ -378,7 +378,7 @@ def t_db_column_whitelist():
         db.DB_PATH = saved
 
 
-@check("db: an existing table gains mfg_date without losing its rows")
+@check("db: an existing table gains mfg_date and is_mock without losing its rows")
 def t_db_migration():
     saved = db.DB_PATH
     path = _temp_db()
@@ -405,16 +405,22 @@ def t_db_migration():
         conn.commit()
         conn.close()
 
-        db.init_db()  # must add the column, not rebuild or drop anything
+        db.init_db()  # must add the columns, not rebuild or drop anything
         rows = db.get_items()
         assert len(rows) == 1, rows
         assert rows[0]["name"] == "Old Row 500mg", rows
         assert rows[0]["expiry_date"] == "2027-01-01", rows
         assert rows[0]["mfg_date"] is None, rows
+        # History saved before mock replies existed was all real detection; the
+        # DEFAULT has to say so, or Meri List would tag it as test data.
+        assert rows[0]["is_mock"] == 0, rows
 
         new_id = db.add_item("medicine", "New Row 250mg", "unknown", None, "2024-05-05")
         assert db.get_item(new_id)["mfg_date"] == "2024-05-05"
-        assert len(db.get_items()) == 2
+        assert db.get_item(new_id)["is_mock"] == 0
+        mock_id = db.add_item("currency", "Rs. 1000", "success", is_mock=True)
+        assert db.get_item(mock_id)["is_mock"] == 1
+        assert len(db.get_items()) == 3
     finally:
         db.DB_PATH = saved
 

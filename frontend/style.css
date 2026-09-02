@@ -653,6 +653,21 @@ button {
   color: var(--color-text-muted);
 }
 
+/* Shown when the vision service was down and the app answered with test data.
+   It has to read as a warning, never as part of a successful detection. */
+.mock-notice {
+  margin: 0 0 20px;
+  padding: 8px 14px;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 12px;
+}
+
 .result-message {
   margin: 12px 0 20px;
   font-size: 1rem;
@@ -813,6 +828,20 @@ button {
   margin-top: 2px;
   font-size: 0.875rem;
   color: var(--color-text-muted);
+}
+
+/* Marks a Meri List row saved from mock data instead of a real detection. */
+.mock-tag {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 9px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 999px;
 }
 
 .badge {

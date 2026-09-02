@@ -5,6 +5,7 @@ injected, so the whole suite is free and instant (the Google free tier is
 20 requests/day and burns out if tests call it).
 """
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -219,7 +220,7 @@ def t_mock_last_resort():
         assert reply.startswith("Panadol 500mg"), reply
         assert meta["mock"] is True, meta
         assert meta["provider"] == "mock", meta
-        assert gemini_client.generate("p", task="currency") == "PKR\n500"
+        assert gemini_client.generate("p", task="currency") == "PKR\n1000"
         label = gemini_client.generate("p", task="label").splitlines()
         assert len(label) == 2 and label[0] > label[1], label
     finally:
@@ -240,6 +241,62 @@ def t_mock_not_used_early():
         assert meta["provider"] == "tabi", meta
     finally:
         restore()
+
+
+@check("mock is on unless MOCK_VISION explicitly switches it off")
+def t_mock_default():
+    # MOCK_VISION is read once at import, so the only way to observe the default
+    # is a fresh interpreter. Placeholder credentials are passed explicitly
+    # because load_dotenv() never overwrites a variable that already exists.
+    script = (
+        "import importlib, os\n"
+        "import gemini_client\n"
+        "print('unset', gemini_client.MOCK_VISION)\n"
+        "for value in ('1', '0', 'false', 'no', 'off', 'OFF', ' 0 ', ''):\n"
+        "    os.environ['MOCK_VISION'] = value\n"
+        "    importlib.reload(gemini_client)\n"
+        "    print(repr(value), gemini_client.MOCK_VISION)\n"
+    )
+    env = dict(os.environ)
+    env.update(
+        {
+            "TABI_API_KEY": "test-tabi-key",
+            "TABI_BASE_URL": "https://tabi.invalid/v1",
+            "GEMINI_API_KEY": "test-google-key",
+        }
+    )
+    env.pop("MOCK_VISION", None)
+    probe = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert probe.returncode == 0, probe.stderr
+    results = dict(line.rsplit(" ", 1) for line in probe.stdout.splitlines())
+    # An outage must not turn into a 503 for a real user, so the default is on.
+    assert results["unset"] == "True", results
+    assert results["''"] == "True", results
+    assert results["'1'"] == "True", results
+    for value in ("'0'", "'false'", "'no'", "'off'", "'OFF'", "' 0 '"):
+        assert results[value] == "False", (value, results)
+
+
+@check("a mock answer carries the notice that labels it as test data")
+def t_mock_fields_label_the_answer():
+    fields = gemini_client.mock_fields({"mock": True, "provider": "mock"})
+    assert fields["mock_notice"] == "TEST DATA", fields
+    # Urdu script, not a placeholder: this is the only warning a blind user gets
+    # that the name they were just told is not a real detection.
+    assert fields["mock_voice"].strip(), fields
+    assert any("\u0600" <= char <= "\u06ff" for char in fields["mock_voice"]), fields
+    assert fields["mock_voice"] == gemini_client.MOCK_NOTICE_VOICE, fields
+
+    assert gemini_client.mock_fields({"mock": False}) == {}
+    assert gemini_client.mock_fields({}) == {}
+    assert gemini_client.mock_fields(None) == {}
 
 
 @check("chain stays inside the budget: no provider starts without a usable slice")
@@ -432,10 +489,14 @@ def t_chain_survives_hung_provider():
 def t_health_summary():
     summary = gemini_client.health_summary()
     assert "mode=" in summary and "providers=" in summary, summary
+    # This suite sets MOCK_VISION=0; /health is the only place an operator can
+    # confirm whether a live deployment will serve test data during an outage.
     assert "mock=off" in summary, summary
-    restore = swap(["google", "tabi"], {})
+    restore = swap(["google", "tabi"], {}, mock=True)
     try:
-        assert "providers=google+tabi" in gemini_client.health_summary()
+        mocked = gemini_client.health_summary()
+        assert "providers=google+tabi" in mocked, mocked
+        assert "mock=on" in mocked, mocked
     finally:
         restore()
 

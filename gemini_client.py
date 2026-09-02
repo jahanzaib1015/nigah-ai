@@ -43,14 +43,16 @@ _TABI_UA = (
 _MAX_TABI_IMAGE_BYTES = 250_000
 _TABI_RETRYABLE_STATUS = (408, 425, 429, 500, 502, 503, 504)
 
-_TRUTHY = ("1", "true", "yes", "on")
+_FALSY = ("0", "false", "no", "off")
 
-# Synthetic replies are the LAST resort and OFF by default. This app tells blind
-# users which medicine they are holding and which note they are paid in, so
-# inventing an answer is worse than admitting the service is down. Set
-# MOCK_VISION=1 only to exercise the frontend during an upstream outage; every
-# mock response is flagged in the JSON and shouted about in the logs.
-MOCK_VISION = (os.getenv("MOCK_VISION") or "").strip().lower() in _TRUTHY
+# Synthetic replies are the AUTOMATIC last resort: when every provider is
+# missing or failing, the app answers with stable test data instead of a 503, so
+# the frontend and the database stay testable straight through an upstream
+# outage. Every mock answer announces itself - on-screen badge, spoken notice,
+# `is_mock` row - because this app tells blind users which medicine they are
+# holding, and a fabricated name must never be mistakable for a real read. Set
+# MOCK_VISION=0 to make a deployment strict again and return the spoken 503.
+MOCK_VISION = (os.getenv("MOCK_VISION") or "").strip().lower() not in _FALSY
 
 # APP_MODE only decides which provider is tried FIRST - both stay wired up as
 # long as their credentials exist, so an outage of the preferred one degrades to
@@ -87,9 +89,10 @@ PROVIDER_MODELS = {"tabi": TABI_MODEL, "google": GEMINI_MODEL}
 
 if not PROVIDERS and not MOCK_VISION:
     raise RuntimeError(
-        "No vision provider is configured. Set TABI_API_KEY + TABI_BASE_URL "
-        "(TabiAI) and/or GEMINI_API_KEY (Google Gemini) in .env, or set "
-        "MOCK_VISION=1 to serve synthetic replies while testing the frontend."
+        "No vision provider is configured and MOCK_VISION is switched off, so "
+        "nothing could answer a scan. Set TABI_API_KEY + TABI_BASE_URL (TabiAI) "
+        "and/or GEMINI_API_KEY (Google Gemini) in .env, or drop MOCK_VISION=0 "
+        "to serve labelled test data instead."
     )
 
 _google_client = None
@@ -237,13 +240,25 @@ def _shift_years(today, years):
 
 
 def _mock_reply(task):
+    """Stable test data shaped exactly like each prompt's real reply.
+
+    These go through the same parsers and validators as a provider answer, so a
+    mock scan exercises the route end to end rather than bypassing it.
+    """
     today = date.today()
     if task == "currency":
-        return "PKR\n500"
+        return "PKR\n1000"
     if task == "label":
         return f"{_shift_years(today, 2).isoformat()}\n{_shift_years(today, -1).isoformat()}"
     if task == "medicine":
-        return f"Panadol 500mg\n{_shift_years(today, 2).isoformat()}"
+        # Labelled on purpose: the medicine scan reads only the FIRST unlabeled
+        # line as a date, so an unlabeled manufacturing date would be dropped
+        # and the mfg half of the UI and database would never be exercised.
+        return (
+            "Panadol 500mg\n"
+            f"EXP: {_shift_years(today, 2).isoformat()}\n"
+            f"MFG: {_shift_years(today, -1).isoformat()}"
+        )
     return "MOCK_REPLY"
 
 
@@ -256,6 +271,23 @@ SERVICE_DOWN_ERROR = (
 SERVICE_DOWN_VOICE = (
     "اسکیننگ سروس ابھی دستیاب نہیں ہے۔ تھوڑی دیر بعد کوشش کریں۔"
 )
+
+# Echoed by both scan routes whenever a reply came from _mock_reply, so the
+# notice is worded identically on every page. On-screen copy stays Roman/English
+# like the rest of the UI; only the spoken text is Urdu script, because the
+# neural voice garbles Roman Urdu.
+MOCK_NOTICE_TEXT = "TEST DATA"
+MOCK_NOTICE_VOICE = (
+    "یہ ٹیسٹ ڈیٹا ہے۔ اسکیننگ سروس دستیاب نہ ہونے کی وجہ سے اصلی پہچان "
+    "نہیں ہو سکی۔"
+)
+
+
+def mock_fields(meta):
+    """Response fields that label a mock answer; empty for a real detection."""
+    if not (meta or {}).get("mock"):
+        return {}
+    return {"mock_notice": MOCK_NOTICE_TEXT, "mock_voice": MOCK_NOTICE_VOICE}
 
 
 def generate(prompt, image_data=None, mime_type="image/jpeg", meta=None, task=None):
@@ -314,7 +346,7 @@ def generate(prompt, image_data=None, mime_type="image/jpeg", meta=None, task=No
 
     if MOCK_VISION:
         print(
-            f"[vision] MOCK reply served (MOCK_VISION=1, task={task!r}) - "
+            f"[vision] MOCK reply served (task={task!r}) - no provider answered, "
             "this is NOT a real detection",
             flush=True,
         )

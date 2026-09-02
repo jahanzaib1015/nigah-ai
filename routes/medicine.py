@@ -429,6 +429,7 @@ def detect_medicine():
         status,
         expiry_date.isoformat() if expiry_date else None,
         mfg_date.isoformat() if mfg_date else None,
+        is_mock=bool(meta.get("mock")),
     )
     if item_id is None:
         print(f"[medicine] DB FAILURE: {name!r} was not saved", flush=True)
@@ -445,6 +446,7 @@ def detect_medicine():
             "mfg_date": mfg_date.isoformat() if mfg_date else None,
             "provider": meta.get("provider"),
             "mock": bool(meta.get("mock")),
+            **gemini_client.mock_fields(meta),
         }
     )
 
@@ -486,22 +488,33 @@ def detect_label(image_data, mime_type):
         return scan_failed(200, NO_DATES_ERROR, NO_DATES_VOICE)
 
     status = medicine_status(expiry_date) if expiry_date else None
+    is_mock = bool(meta.get("mock"))
 
     if item_id is not None:
-        # update_item() ignores None, so a label scan that only saw the
-        # manufacturing date cannot erase a previously stored expiry.
-        db.update_item(
-            item_id,
-            expiry_date=expiry_date.isoformat() if expiry_date else None,
-            mfg_date=mfg_date.isoformat() if mfg_date else None,
-            status=status,
-        )
-        if db.get_item(item_id) is None:
+        row = db.get_item(item_id)
+        if row is None:
             print(
                 f"[medicine] DB FAILURE: label scan referenced missing item {item_id}",
                 flush=True,
             )
             return scan_failed(500)
+        if is_mock and not row["is_mock"]:
+            # Synthetic dates must never overwrite dates read from a real pack:
+            # a fabricated "safe" expiry on an expired medicine is the one
+            # mistake this app cannot make.
+            print(
+                f"[medicine] label MOCK reply not written over real item {item_id}",
+                flush=True,
+            )
+        else:
+            # update_item() ignores None, so a label scan that only saw the
+            # manufacturing date cannot erase a previously stored expiry.
+            db.update_item(
+                item_id,
+                expiry_date=expiry_date.isoformat() if expiry_date else None,
+                mfg_date=mfg_date.isoformat() if mfg_date else None,
+                status=status,
+            )
 
     return jsonify(
         {
@@ -510,6 +523,7 @@ def detect_label(image_data, mime_type):
             "mfg_date": mfg_date.isoformat() if mfg_date else None,
             "status": status,
             "provider": meta.get("provider"),
-            "mock": bool(meta.get("mock")),
+            "mock": is_mock,
+            **gemini_client.mock_fields(meta),
         }
     )

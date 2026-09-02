@@ -75,6 +75,26 @@ def install(stub):
     return lambda: setattr(gemini_client, "generate", saved)
 
 
+def outage():
+    """Simulate a total upstream outage on the REAL chain.
+
+    Unlike install(), nothing is stubbed at the route boundary: generate() runs
+    its own loop, finds every provider failing, and falls through to the mock
+    reply - so the mock answer is parsed and validated exactly like a real one.
+    """
+    def down(*args):
+        raise RuntimeError("provider is down")
+
+    saved = (gemini_client._PROVIDER_CALLS, gemini_client.MOCK_VISION)
+    gemini_client._PROVIDER_CALLS = {name: down for name in gemini_client.PROVIDERS}
+    gemini_client.MOCK_VISION = True
+
+    def restore():
+        gemini_client._PROVIDER_CALLS, gemini_client.MOCK_VISION = saved
+
+    return restore
+
+
 def client():
     app_module.app.config["TESTING"] = True
     return app_module.app.test_client()
@@ -446,8 +466,80 @@ def t_mock_flag_reaches_client():
         assert body["success"] is True, body
         assert body["mock"] is True, body
         assert body["provider"] == "mock", body
+        assert body["mock_notice"] == gemini_client.MOCK_NOTICE_TEXT, body
+        assert body["mock_voice"] == gemini_client.MOCK_NOTICE_VOICE, body
+        assert db.get_item(body["id"])["is_mock"] == 1, "the row must stay marked"
     finally:
         restore()
+
+
+@check("a total outage answers with valid labelled data instead of a 503")
+def t_outage_never_503s():
+    reset_db()
+    restore = outage()
+    try:
+        currency = upload("/detect-currency")
+        assert currency.status_code == 200, currency.status_code
+        body = currency.get_json()
+        assert body["success"] is True, body
+        assert body["currency"] == "PKR", body
+        assert body["denomination"] == "1000", body
+        assert body["mock"] is True and body["mock_notice"], body
+
+        medicine = upload("/detect-medicine")
+        assert medicine.status_code == 200, medicine.status_code
+        body = medicine.get_json()
+        assert body["success"] is True, body
+        assert body["name"] == "Panadol 500mg", body
+        # Both dates have to survive the real parsers, or a mock scan would
+        # never exercise the mfg half of the UI and the database.
+        assert body["expiry_date"], body
+        assert body["mfg_date"], body
+        assert body["status"] == "safe", body
+        assert body["mock_notice"], body
+
+        label = upload(
+            "/detect-medicine",
+            extra={"scan_type": "label", "item_id": str(body["id"])},
+        )
+        assert label.status_code == 200, label.status_code
+        assert label.get_json()["success"] is True, label.get_json()
+        assert label.get_json()["mock_notice"], label.get_json()
+
+        rows = db.get_items()
+        assert [row["is_mock"] for row in rows] == [1, 1], rows
+    finally:
+        restore()
+
+
+@check("a mock label scan cannot overwrite dates read from a real pack")
+def t_mock_label_spares_real_row():
+    reset_db()
+    restore = install(Stub(reply="Panadol 500mg\n2024-01-15"))
+    try:
+        item_id = upload("/detect-medicine").get_json()["id"]
+    finally:
+        restore()
+    real = db.get_item(item_id)
+    assert real["is_mock"] == 0 and real["status"] == "expired", real
+
+    restore = outage()
+    try:
+        body = upload(
+            "/detect-medicine",
+            extra={"scan_type": "label", "item_id": str(item_id)},
+        ).get_json()
+        assert body["success"] is True, body
+        assert body["mock"] is True and body["mock_notice"], body
+    finally:
+        restore()
+
+    # A fabricated "safe" expiry on an expired medicine is the one mistake this
+    # app cannot make, so the synthetic dates are reported but never stored.
+    row = db.get_item(item_id)
+    assert row["status"] == "expired", row
+    assert row["expiry_date"] == "2024-01-15", row
+    assert row["mfg_date"] is None, row
 
 
 @check("/health reports the whole chain")
@@ -456,6 +548,7 @@ def t_health():
     assert body.status_code == 200, body.status_code
     text = body.get_data(as_text=True)
     assert "providers=" in text, text
+    # This suite pins MOCK_VISION=0 at import; a normal process defaults to on.
     assert "mock=off" in text, text
 
 

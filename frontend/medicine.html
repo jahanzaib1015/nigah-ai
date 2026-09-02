@@ -114,6 +114,8 @@
         <p class="result-message" id="resultMessage">Dobara koshish karein — dawai ka label roshni mein, seedha aur frame ke beech mein rakhein.</p>
       </div>
 
+      <p class="mock-notice hidden" id="mockNotice"></p>
+
       <div class="result-actions">
         <button type="button" class="btn btn-primary hidden" id="labelScanBtn">Expiry Label Scan Karein</button>
         <button type="button" class="btn btn-outline" id="againBtn">Dobara Scan Karein</button>
@@ -142,6 +144,7 @@
       var resultValue = document.getElementById('resultValue');
       var resultDates = document.getElementById('resultDates');
       var resultMessage = document.getElementById('resultMessage');
+      var mockNotice = document.getElementById('mockNotice');
       var expiredName = document.getElementById('expiredName');
       var expiredDate = document.getElementById('expiredDate');
       var labelScanBtn = document.getElementById('labelScanBtn');
@@ -165,6 +168,9 @@
       var STEP2_TEXT = 'اگر آپ ایکسپائری اور ایم ایف جی ڈیٹ بھی ریکارڈ میں رکھنا چاہتے ہیں، تو ایکسپائری والے لیبل کو اسکین کریں۔';
       var LABEL_SCAN_VOICE = 'ایکسپائری والے لیبل کو کیمرے کے سامنے رکھیں اور اسکین کریں۔';
       var DATES_RECORDED_TEXT = 'تاریخیں ریکارڈ ہو گئی ہیں۔';
+      // Same wording the backend sends as mock_voice; kept here so it can be
+      // preloaded and so the notice still speaks if the field is missing.
+      var MOCK_VOICE = 'یہ ٹیسٹ ڈیٹا ہے۔ اسکیننگ سروس دستیاب نہ ہونے کی وجہ سے اصلی پہچان نہیں ہو سکی۔';
 
       function startCamera() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -199,7 +205,7 @@
         return parts.join('  |  ');
       }
 
-      function showResult(success, name, errorMsg, errorVoice, status, expiryDate, voiceName, mfgDate) {
+      function showResult(success, name, errorMsg, errorVoice, status, expiryDate, voiceName, mfgDate, mockText, mockVoice) {
         resultShown = true;
         shell.classList.add('result-open');
         fallback.classList.add('hidden');
@@ -211,6 +217,14 @@
           expiredDate.textContent = expiryDate ? 'Expiry date: ' + expiryDate : '';
           labelScanBtn.classList.remove('hidden');
           speakUrdu(EXPIRED_TEXT);
+          if (mockText) {
+            mockNotice.textContent = mockText + ' — asli pehchan nahi hui';
+            mockNotice.classList.remove('hidden');
+            // Queued after speakUrdu, which drops anything already queued.
+            queueUrdu(mockVoice || MOCK_VOICE);
+          } else {
+            mockNotice.classList.add('hidden');
+          }
           if (navigator.vibrate) {
             navigator.vibrate([200, 100, 200, 100, 200]);
           }
@@ -225,6 +239,13 @@
             resultDates.classList.add('hidden');
           }
           labelScanBtn.classList.remove('hidden');
+          if (mockText) {
+            mockNotice.textContent = mockText + ' — asli pehchan nahi hui';
+            mockNotice.classList.remove('hidden');
+            queueUrdu(mockVoice || MOCK_VOICE);
+          } else {
+            mockNotice.classList.add('hidden');
+          }
           queueUrdu('یہ ' + (voiceName || name) + ' دوائی ہے');
           queueUrdu(STEP2_TEXT);
           if (navigator.vibrate) {
@@ -234,6 +255,7 @@
           failCount += 1;
           resultCard.classList.add('is-failure');
           labelScanBtn.classList.add('hidden');
+          mockNotice.classList.add('hidden');
           var message = errorMsg || 'Scan kamyaab nahi hua. Dobara koshish karein.';
           resultMessage.textContent = message;
           speakUrdu(errorVoice || 'اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔');
@@ -257,6 +279,13 @@
           expiredName.textContent = pendingName || '—';
           expiredDate.textContent = data.expiry_date ? 'Expiry date: ' + data.expiry_date : '';
           speakUrdu(EXPIRED_TEXT);
+          if (data.mock_notice) {
+            mockNotice.textContent = data.mock_notice + ' — asli pehchan nahi hui';
+            mockNotice.classList.remove('hidden');
+            queueUrdu(data.mock_voice || MOCK_VOICE);
+          } else {
+            mockNotice.classList.add('hidden');
+          }
           if (navigator.vibrate) {
             navigator.vibrate([200, 100, 200, 100, 200]);
           }
@@ -267,6 +296,13 @@
           resultDates.textContent = formatDates(data.expiry_date, data.mfg_date);
           resultDates.classList.remove('hidden');
           speakUrdu(DATES_RECORDED_TEXT);
+          if (data.mock_notice) {
+            mockNotice.textContent = data.mock_notice + ' — asli pehchan nahi hui';
+            mockNotice.classList.remove('hidden');
+            queueUrdu(data.mock_voice || MOCK_VOICE);
+          } else {
+            mockNotice.classList.add('hidden');
+          }
           if (navigator.vibrate) {
             navigator.vibrate(100);
           }
@@ -327,7 +363,7 @@
             } else if (data && data.success) {
               pendingId = data.id;
               pendingName = data.name;
-              showResult(true, data.name, null, null, data.status, data.expiry_date, data.voice_name, data.mfg_date);
+              showResult(true, data.name, null, null, data.status, data.expiry_date, data.voice_name, data.mfg_date, data.mock_notice, data.mock_voice);
             } else {
               showResult(false, null, data && data.error, data && data.voice);
             }
@@ -392,6 +428,7 @@
       preloadUrdu(STEP2_TEXT);
       preloadUrdu(LABEL_SCAN_VOICE);
       preloadUrdu(DATES_RECORDED_TEXT);
+      preloadUrdu(MOCK_VOICE);
       preloadUrdu('اسکین کامیاب نہیں ہوا۔ دوبارہ کوشش کریں۔');
       preloadUrdu('یہ دوائی نہیں ہے۔ صرف دوائی کے باکس یا پتے کی تصویر لیں۔');
       preloadUrdu('معذرت، لکھائی پڑھ نہیں سکی۔ کرپیا چیک کریں کہ صاف سائیڈ کیمرے کے سامنے ہے یا نہیں، اور پھر سے کوشش کریں۔');
