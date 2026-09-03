@@ -121,7 +121,7 @@ Frontend (PWA - HTML/CSS/JS)
         v  Base64 Image
 Flask Backend (Python)
         |
-        v  Gemini Vision API
+        v  Vision chain (Gemini x2 -> TabiAI)
 AI Analysis (Medicine/Currency)
         |
         v  Parsing & Validation
@@ -136,7 +136,7 @@ SQLite Database (History)
 
 ### Backend Components
 - **`app.py`** — Flask application entry point, routing, and API endpoints.
-- **`gemini_client.py`** — Google Gemini Vision client: one model (`gemini-3.6-flash`), one transport, one retry on HTTP 429, and the two strings spoken when a scan cannot be answered.
+- **`gemini_client.py`** — Vision failover chain: `google-1` → `google-2` → `tabi` (Google Gemini `gemini-3.6-flash` on two keys, then TabiAI `claude-opus-5`), instant fallthrough on any tier error, per-tier `[vision]` logging, and the two strings spoken when a scan cannot be answered.
 - **`db.py`** — SQLite database helper functions for history storage.
 - **`routes/medicine.py`** — Medicine scanning logic, `clean_name()` guard, expiry parsing.
 - **`routes/currency.py`** — PKR note detection, denomination validation.
@@ -147,12 +147,12 @@ SQLite Database (History)
 
 This app tells a blind user which note or which medicine they are holding, so there are exactly **two** possible outcomes for every scan — never a third:
 
-1. **A genuine result.** Google Gemini read the photo and the validators accept what it said. The result is announced, spoken and saved to Meri List.
-2. **An honest failure.** Gemini failed, timed out, was rate-limited on both attempts, or replied with something the validators reject (a bare strength, a refusal sentence, an unissued denomination, a foreign note, an unreadable date). The user hears *"پہچان نہیں ہو سکی۔ دوبارہ کوشش کریں۔"* and **nothing is saved**.
+1. **A genuine result.** A provider in the chain (`google-1` → `google-2` → `tabi`) read the photo and the validators accept what it said. The result is announced, spoken and saved to Meri List; the winning provider is named in the response and in the Railway log.
+2. **An honest failure.** Every tier failed (rate limit, timeout, bad key, empty reply) or the winning reply failed validation (a bare strength, a refusal sentence, an unissued denomination, a foreign note, an unreadable date). The user hears *"پہچان نہیں ہو سکی۔ دوبارہ کوشش کریں۔"* and **nothing is saved**.
 
-There is no fallback provider, no cached answer and no stand-in data of any kind. A reply that cannot be verified is treated as no reply at all, because a plausible invention is more dangerous than a failure. The one exception is a verdict about the *photo itself* — `UNCLEAR`, `NOT_CURRENCY`, `NOT_MEDICINE`, `NO_DATES` — which is also a failure, but keeps its own specific rescan guidance instead of the generic message.
+Failover is between **real providers only**. There is no cached answer, no stand-in data and no test-data mode of any kind — a reply that cannot be verified is treated as no reply at all, because a plausible invention is more dangerous than a failure. The one exception is a verdict about the *photo itself* — `UNCLEAR`, `NOT_CURRENCY`, `NOT_MEDICINE`, `NO_DATES` — which is also a failure, but keeps its own specific rescan guidance instead of the generic message.
 
-`gemini_client.py` refuses to import at all when `GEMINI_API_KEY` is missing, so a process that could not answer a scan never starts.
+`gemini_client.py` refuses to import at all when no provider key is configured (`GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`, `TABI_AI_KEY`), so a process that could not answer a scan never starts.
 
 ### Frontend Components
 - **`index.html`** — Mobile-first PWA shell.
@@ -228,7 +228,7 @@ The medicine scanning module is fortified at **three layers** to guarantee relia
 ## Currency Recognition
 
 - **Scope:** Pakistani Rupee (PKR) notes only. A reply naming any other currency is rejected, so a foreign note is never announced as rupees.
-- **Gemini Vision API** analyzes the note and returns the denomination.
+- **The vision chain** (Google Gemini ×2, then TabiAI) analyzes the note and returns the denomination.
 - **Urdu voice output** announces the amount clearly.
 - **67-image benchmark dataset** prepared for accuracy evaluation.
 - **Denomination mapping** ensures correct Urdu wording for each note value.
@@ -274,11 +274,11 @@ python tests/test_vision_client.py
 python tests/test_routes_offline.py
 python tests/test_parsing_and_db.py
 ```
-No network, no API quota, no writes to the real Meri List — the transport call and the clock are injected, and the database is a throwaway file. **57 checks, all passing.**
+No network, no API quota, no writes to the real Meri List — the transport call and the clock are injected, and the database is a throwaway file. **72 checks, all passing.**
 
-- `test_vision_client.py` — **11 checks**: the reply is returned exactly as the model wrote it, one retry after a 429 then success, exhaustion after two 429s, immediate failure with no retry on any other error, an empty (safety-blocked) reply treated as a failure rather than a blank result, images sent inline, `/health` naming one provider with no fallback, the Urdu failure line, an allowlist pinning the module's whole surface so no second transport or canned reply can reappear unnoticed, and the import-time refusal to start without `GEMINI_API_KEY`.
-- `test_routes_offline.py` — **23 checks**: both scan routes end to end, every validation refusal, that a foreign note is never announced as rupees, that a real client failure yields a 503 with the honest message and saves nothing, the two-step medicine label merge, Meri List read/delete, an allowlist pinning every field any endpoint may return, and the rule that photo sentinels keep their own guidance while still being failures.
-- `test_parsing_and_db.py` — **23 checks**: currency and medicine reply parsing, expiry/mfg classification, status rules, and the SQLite layer including schema migration of an existing table and an allowlist pinning the stored columns.
+- `test_vision_client.py` — **22 checks**: the reply is returned exactly as the model wrote it, a 429 on the first key falling through to the second with no pause, timeouts cascading through every tier until one answers, all tiers failing being the honest failure with each tier named, per-key client caching, the TabiAI payload (browser UA, bearer key, data-URI image, `claude-opus-5`), retryable vs non-retryable TabiAI statuses, oversized images shrunk under TabiAI's limit, a hung transport abandoned at the wall-clock bound, `/health` naming every tier and both models with no synthetic fallback, the Urdu failure line, an allowlist pinning the module's whole surface plus a source-level ban on the word "mock" so no synthetic reply can reappear unnoticed, the import-time refusal to start without any provider key, and the legacy variable names keeping older deployments on the chain.
+- `test_routes_offline.py` — **25 checks**: both scan routes end to end, every validation refusal, that a foreign note is never announced as rupees, that a real client failure exhausts the whole chain into a 503 with the honest message and saves nothing, the two-step medicine label merge, Meri List read/delete, an allowlist pinning every field any endpoint may return, and the rule that photo sentinels keep their own guidance while still being failures.
+- `test_parsing_and_db.py` — **25 checks**: currency and medicine reply parsing, expiry/mfg classification, status rules, and the SQLite layer including schema migration of an existing table and an allowlist pinning the stored columns.
 
 ### Currency Accuracy Benchmark
 ```bash
@@ -345,13 +345,14 @@ nigah-ai/
 ├── app.py                      # Flask entrypoint: blueprints, static serving,
 │                               #   root catch-all, /health, PORT
 ├── db.py                       # SQLite layer — scanned_items (add/update/get/delete)
-├── gemini_client.py            # Google Gemini only: gemini-3.6-flash, inline
-│                               #   base64 image, 60s deadline, one retry on 429
+├── gemini_client.py            # Vision chain google-1 -> google-2 -> tabi
+│                               #   (gemini-3.6-flash x2, claude-opus-5), inline
+│                               #   base64 images, instant failover, budget-bounded
 |
 ├── Procfile                    # web: gunicorn --timeout 200 app:app (Railway)
 ├── requirements.txt            # flask, flask-cors, google-generativeai,
 │                               #   python-dotenv, edge-tts, requests, Pillow, gunicorn
-├── .env.example                # Template (GEMINI_API_KEY placeholder)
+├── .env.example                # Template (provider key placeholders)
 ├── .gitignore                  # .env, nigah.db, __pycache__, .pyc,
 │                               #   vibe_images/, speech_cache/
 |
@@ -423,15 +424,22 @@ nigah-ai/
 Create a `.env` file in the project root (`.env.example` is provided as a template).
 
 ```
-GEMINI_API_KEY=your_google_gemini_api_key
+GEMINI_API_KEY_1=your_first_google_gemini_api_key
+GEMINI_API_KEY_2=your_second_google_gemini_api_key
+TABI_AI_KEY=your_tabiai_api_key
 ```
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `GEMINI_API_KEY` | **Required** | Google Gemini Vision API key. It is the only vision provider, so `gemini_client.py` raises at import time without it — a process that could not answer a single scan never starts |
+| `GEMINI_API_KEY_1` | **Required** (or legacy `GEMINI_API_KEY`) | First-tier Google Gemini Vision key (`gemini-3.6-flash`). At least one provider key must be set or `gemini_client.py` raises at import time — a process that could not answer a single scan never starts |
+| `GEMINI_API_KEY_2` | Recommended | Second-tier Google Gemini key. When tier 1 returns a rate limit (429), timeout or any other error, the chain falls through to this key instantly |
+| `TABI_AI_KEY` | Recommended (or legacy `TABI_API_KEY`) | Third-tier TabiAI key (`claude-opus-5`) — the last real provider before the honest failure |
+| `TABI_BASE_URL` | Optional | TabiAI endpoint; defaults to `https://tabitoken.com/v1` |
 | `PORT` | Optional | Server port; defaults to `5000` locally and is injected automatically by Railway in production |
 | `APP_MODE` | Optional | Only affects a local `python app.py`: setting it to `production` turns the Flask debug auto-reloader off. Railway runs gunicorn and ignores it |
 | `RAILWAY_VOLUME_MOUNT_PATH` | Railway-only | Set automatically by Railway when a Volume is attached to the service (never by hand). `db.py` stores `nigah.db` inside it so Meri List survives redeploys and restarts |
+
+> **Note:** Older deployments that still use the legacy names keep working: `GEMINI_API_KEY` is read as tier 1 and `TABI_API_KEY` as the TabiAI tier whenever the new names are absent. The new names always win. Real key values live only in `.env` (git-ignored) and the Railway dashboard — never in the repository.
 
 > **Note:** The `.env.example` file is maintained as a template; actual secrets are never committed to the repository.
 

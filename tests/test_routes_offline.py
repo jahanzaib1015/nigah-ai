@@ -5,9 +5,10 @@ free and instantly and cannot pollute the developer's real Meri List or burn the
 20-requests/day Google free tier. Unlike a pure unit test, the routes write to a
 real SQLite file here, so "was it actually saved?" is part of what is verified.
 
-The contract under test is binary: either Google Gemini read the photo and the
-validators accept what it said, or the user is told the scan failed. There is no
-third answer, and nothing in this app may invent a note or a medicine.
+The contract under test is binary: either a real provider in the chain (Google
+Gemini or TabiAI) read the photo and the validators accept what it said, or the
+user is told the scan failed. There is no third answer, and nothing in this app
+may invent a note or a medicine.
 """
 import io
 import os
@@ -18,8 +19,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-# gemini_client refuses to import without a key.
-os.environ.setdefault("GEMINI_API_KEY", "test-google-key")
+# gemini_client refuses to import without any provider key. Setting these names
+# first also wins over load_dotenv(), which never overrides an existing
+# variable - otherwise the developer's real .env keys would leak into the tiers.
+os.environ.setdefault("GEMINI_API_KEY_1", "test-google-key-1")
+os.environ.setdefault("GEMINI_API_KEY_2", "test-google-key-2")
+os.environ.setdefault("TABI_AI_KEY", "test-tabi-key")
+os.environ.setdefault("TABI_BASE_URL", "https://tabi.invalid/v1")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -76,7 +82,7 @@ ROW_KEYS = {"id", "type", "name", "status", "expiry_date", "mfg_date", "timestam
 class Stub:
     """Stand-in for gemini_client.generate."""
 
-    def __init__(self, reply=None, error=None, provider="google"):
+    def __init__(self, reply=None, error=None, provider="google-1"):
         self.reply = reply
         self.error = error
         self.provider = provider
@@ -104,16 +110,23 @@ def install(stub):
 def outage():
     """Break the REAL client, below the route boundary.
 
-    Nothing is stubbed here: generate() runs its own retry loop, the transport
-    raises, and the client has to turn that into VisionUnavailable so the route
-    answers with the honest failure instead of a fabricated result.
+    Nothing is stubbed here: generate() runs its own chain, every transport
+    raises, and the client has to exhaust the tiers into VisionUnavailable so
+    the route answers with the honest failure instead of a fabricated result.
     """
     def down(*args):
         raise RuntimeError("transport is down")
 
-    saved = gemini_client._call_google
+    saved_google = gemini_client._call_google
+    saved_tabi = gemini_client._call_tabi
     gemini_client._call_google = down
-    return lambda: setattr(gemini_client, "_call_google", saved)
+    gemini_client._call_tabi = down
+
+    def restore():
+        gemini_client._call_google = saved_google
+        gemini_client._call_tabi = saved_tabi
+
+    return restore
 
 
 def client():
@@ -170,7 +183,7 @@ def t_currency_saved():
         assert body["success"] is True, body
         assert body["denomination"] == "200", body
         assert body["currency"] == "PKR", body
-        assert body["provider"] == "google", body
+        assert body["provider"] == "google-1", body
         assert stub.calls[0]["bytes"] > 0, stub.calls
 
         rows = db.get_items()
@@ -340,7 +353,7 @@ def t_medicine_saved():
         assert body["status"] == "safe", body
         assert body["expiry_date"] == "2027-03-31", body
         assert body["mfg_date"] is None, body
-        assert body["provider"] == "google", body
+        assert body["provider"] == "google-1", body
 
         row = db.get_item(body["id"])
         assert row["name"] == "Panadol 500mg", row
@@ -668,7 +681,7 @@ def t_response_surface():
             keys -= {"items"}
         assert keys <= RESPONSE_KEYS, (keys - RESPONSE_KEYS, body)
         if body.get("success") and "provider" in body:
-            assert body["provider"] == "google", body
+            assert body["provider"] == "google-1", body
 
 
 @check("photo sentinels keep their own message and are never a fake result")
@@ -695,14 +708,14 @@ def t_sentinels_stay_failures():
     assert db.get_items() == [], "a photo the model could not read must not create a row"
 
 
-@check("/health reports one provider, the model and no fallback")
+@check("/health reports every tier, both models and no synthetic fallback")
 def t_health():
     body = client().get("/health")
     assert body.status_code == 200, body.status_code
     text = body.get_data(as_text=True)
-    assert "provider=google" in text, text
-    assert "model=gemini-3.6-flash" in text, text
-    assert "fallback=none" in text, text
+    assert "providers=google-1+google-2+tabi" in text, text
+    assert "models=gemini-3.6-flash,claude-opus-5" in text, text
+    assert "fallback=real-providers-only" in text, text
 
 
 def main():

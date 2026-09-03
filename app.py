@@ -32,8 +32,8 @@ def index():
 
 @app.route("/health")
 def health():
-    # Reports the one vision model this process will call, so a deployed
-    # instance can be verified from outside.
+    # Reports the vision providers this process will actually call, so a
+    # deployed instance can be verified from outside.
     return f"Nigah AI Backend Running ({gemini_client.health_summary()})"
 
 
