@@ -305,7 +305,7 @@ python tests/test_currency_accuracy.py
 ### Production (Railway)
 - **Live URL:** [https://nigah-ai-production.up.railway.app/](https://nigah-ai-production.up.railway.app/)
 - **Auto-deploy:** Every push to `main` branch triggers Railway deployment.
-- **Database:** SQLite (non-persistent across redeploys; volume mount optional for production persistence).
+- **Database:** SQLite, persistent across redeploys and restarts. `db.py` stores `nigah.db` inside `RAILWAY_VOLUME_MOUNT_PATH` (injected automatically by Railway when a Volume is attached). Attach a Volume in the Railway dashboard (Service → Settings → Volumes, e.g. mounted at `/data`) — without it, the container filesystem is ephemeral and Meri List is wiped on every deploy. Locally the file lives in the repo directory.
 
 ### Local Development
 
@@ -431,6 +431,7 @@ GEMINI_API_KEY=your_google_gemini_api_key
 | `GEMINI_API_KEY` | **Required** | Google Gemini Vision API key. It is the only vision provider, so `gemini_client.py` raises at import time without it — a process that could not answer a single scan never starts |
 | `PORT` | Optional | Server port; defaults to `5000` locally and is injected automatically by Railway in production |
 | `APP_MODE` | Optional | Only affects a local `python app.py`: setting it to `production` turns the Flask debug auto-reloader off. Railway runs gunicorn and ignores it |
+| `RAILWAY_VOLUME_MOUNT_PATH` | Railway-only | Set automatically by Railway when a Volume is attached to the service (never by hand). `db.py` stores `nigah.db` inside it so Meri List survives redeploys and restarts |
 
 > **Note:** The `.env.example` file is maintained as a template; actual secrets are never committed to the repository.
 

@@ -2,7 +2,21 @@ import os
 import sqlite3
 from datetime import datetime
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nigah.db")
+
+def _default_db_path():
+    # A Railway container's filesystem is rebuilt on every deploy and restart,
+    # so a database file inside the repo directory was wiped each time and
+    # Meri List came back empty. When a Volume is attached in Railway, the
+    # mount path is injected as RAILWAY_VOLUME_MOUNT_PATH; the database lives
+    # on the volume so scan history survives. Locally the file stays beside
+    # db.py.
+    volume_mount = (os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or "").strip()
+    if volume_mount:
+        return os.path.join(volume_mount, "nigah.db")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "nigah.db")
+
+
+DB_PATH = _default_db_path()
 
 # update_item() builds its SET clause from these names, so a field that is not
 # on this list can never reach SQL - not even accidentally from a caller.
@@ -25,6 +39,9 @@ def get_connection():
 
 
 def init_db():
+    directory = os.path.dirname(DB_PATH)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
     conn = get_connection()
     try:
         conn.execute(

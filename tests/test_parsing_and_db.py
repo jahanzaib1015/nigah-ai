@@ -5,6 +5,7 @@ logic that decides what a blind user is told and what lands in Meri List.
 """
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from datetime import date
@@ -490,6 +491,56 @@ def t_db_connection_cleanup():
         assert db.add_item("currency", "Rs. 100", "success") > item_id
     finally:
         db.DB_PATH = saved
+
+
+@check("db: the database follows the Railway volume and survives a restart")
+def t_db_volume_persistence():
+    volume_dir = tempfile.mkdtemp(prefix="nigah_volume_")
+    expected_db = os.path.join(volume_dir, "nigah.db")
+
+    def run(code, mount):
+        # A fresh interpreter is what a Railway restart looks like to the app:
+        # db.py is imported again, this time against the mounted volume.
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=str(ROOT),
+            env={**os.environ, "RAILWAY_VOLUME_MOUNT_PATH": mount},
+            capture_output=True,
+            text=True,
+        )
+
+    write = run(
+        "import os, sys\n"
+        "sys.path.insert(0, os.getcwd())\n"
+        "import db\n"
+        f"assert db.DB_PATH == {expected_db!r}, db.DB_PATH\n"
+        "db.init_db()\n"
+        "db.add_item('medicine', 'Panadol 500mg', 'safe')\n",
+        volume_dir,
+    )
+    assert write.returncode == 0, write.stderr
+    assert os.path.exists(expected_db), expected_db
+
+    restart = run(
+        "import os, sys\n"
+        "sys.path.insert(0, os.getcwd())\n"
+        "import db\n"
+        f"assert db.DB_PATH == {expected_db!r}, db.DB_PATH\n"
+        "items = db.get_items()\n"
+        "assert len(items) == 1, items\n"
+        "assert items[0]['name'] == 'Panadol 500mg', items\n",
+        volume_dir,
+    )
+    assert restart.returncode == 0, restart.stderr
+
+    local = run(
+        "import os, sys\n"
+        "sys.path.insert(0, os.getcwd())\n"
+        "import db\n"
+        "assert os.path.dirname(db.DB_PATH) == os.getcwd(), db.DB_PATH\n",
+        "",
+    )
+    assert local.returncode == 0, local.stderr
 
 
 def main():
