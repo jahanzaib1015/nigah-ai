@@ -300,11 +300,11 @@ def t_long_name_cap():
     assert clean_name(long_name) == long_name
 
 
-@check("medicine: voice_name still spells out the plus sign")
+@check("medicine: voice_name speaks the name in Urdu script and spells out plus")
 def t_voice_name():
-    assert voice_name("Getformin 2mg + 500mg") == "Getformin 2mg plus 500mg"
-    assert voice_name("Panadol 500mg") == "Panadol 500mg"
-    assert voice_name("Panadol 500 milligrams") == "Panadol 500 mg"
+    assert voice_name("Getformin 2mg + 500mg") == "گیتفورمین 2mg plus 500mg"
+    assert voice_name("Panadol 500mg") == "پانادول 500mg"
+    assert voice_name("Panadol 500 milligrams") == "پانادول 500 mg"
 
 
 # -------------------------------------------------------------------- db ---

@@ -294,11 +294,75 @@ def read_dates(lines, second_is_mfg=False):
     return expiry, mfg
 
 
+# The Urdu TTS voice (ur-PK-AsadNeural) silently drops Latin-script brand
+# names: "یہ Lidosporin 5ml دوائی ہے" renders byte-identical audio to
+# "یہ 5ml دوائی ہے", so a blind user heard the strength but never the name.
+# Digits, the unit symbols mg, ml and IU, and the word "plus" ARE read
+# natively, so only the other letters are transliterated into Urdu script.
+# "mcg" and a bare "g" are spelled out in Urdu because the voice cannot be
+# relied on to read those symbols, and a lone letter (the D in "Vitamin D3")
+# becomes its letter name ("ڈی"), not a consonant sound.
+_URDU_DIGRAPHS = (
+    ("sh", "ش"), ("ch", "چ"), ("kh", "خ"), ("th", "تھ"), ("ph", "ف"),
+    ("gh", "گھ"), ("ck", "ک"), ("qu", "کو"),
+)
+_URDU_LETTERS = {
+    "a": "ا", "b": "ب", "c": "ک", "d": "د", "e": "ی", "f": "ف",
+    "g": "گ", "h": "ہ", "i": "ی", "j": "ج", "k": "ک", "l": "ل",
+    "m": "م", "n": "ن", "o": "و", "p": "پ", "q": "ق", "r": "ر",
+    "s": "س", "t": "ت", "u": "و", "v": "و", "w": "و", "x": "کس",
+    "y": "ی", "z": "ز",
+}
+_URDU_LETTER_NAMES = {
+    "a": "اے", "b": "بی", "c": "سی", "d": "ڈی", "e": "ای", "f": "ایف",
+    "g": "جی", "h": "ایچ", "i": "آئی", "j": "جے", "k": "کے", "l": "ایل",
+    "m": "ایم", "n": "این", "o": "او", "p": "پی", "q": "کیو", "r": "ار",
+    "s": "ایس", "t": "ٹی", "u": "یو", "v": "وی", "w": "ڈبلیو", "x": "ایکس",
+    "y": "وائی", "z": "زیڈ",
+}
+_VOICE_UNIT_WORDS = {"mg", "ml", "iu", "plus"}
+_LETTER_RUN_RE = re.compile(r"[A-Za-z]+")
+
+
+def _transliterate_word(word):
+    lowered = word.lower()
+    out = []
+    index = 0
+    while index < len(lowered):
+        for latin, urdu in _URDU_DIGRAPHS:
+            if lowered.startswith(latin, index):
+                out.append(urdu)
+                index += len(latin)
+                break
+        else:
+            letter = lowered[index]
+            if letter == "c" and index + 1 < len(lowered) and lowered[index + 1] in "eiy":
+                out.append("س")
+            else:
+                out.append(_URDU_LETTERS.get(letter, letter))
+            index += 1
+    return "".join(out)
+
+
+def _spoken_letters(match):
+    run = match.group(0)
+    if run.lower() in _VOICE_UNIT_WORDS:
+        return run
+    if len(run) == 1:
+        return _URDU_LETTER_NAMES.get(run.lower(), run)
+    return _transliterate_word(run)
+
+
 def voice_name(name):
     # Display text keeps the printed '+' icon; the spoken form says "plus".
     voice = re.sub(r"\s*\+\s*", " plus ", name)
     voice = re.sub(r"\bmilligrams?\b", "mg", voice, flags=re.IGNORECASE)
-    return voice
+    voice = re.sub(r"(?<![A-Za-z])mcg(?![A-Za-z])", " مائیکرو گرام", voice, flags=re.IGNORECASE)
+    voice = re.sub(r"(?<![A-Za-z])g(?![A-Za-z])", " گرام", voice, flags=re.IGNORECASE)
+    # A blind user cannot see the slash separator, so it is spoken as "per".
+    voice = voice.replace("/", " فی ")
+    voice = _LETTER_RUN_RE.sub(_spoken_letters, voice)
+    return re.sub(r"\s+", " ", voice).strip()
 
 
 _NAME_SENTINELS = {"", "UNKNOWN", "EXPIRY_NOT_VISIBLE", "N/A", "NA", "NONE", "-"}

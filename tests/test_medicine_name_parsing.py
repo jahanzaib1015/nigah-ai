@@ -94,8 +94,8 @@ def main():
     assert _is_strength_only("125mg/5ml")
     assert not _is_strength_only("Panadol")
     assert not _is_strength_only("پانڈول")
-    assert voice_name("Getformin 2mg + 500mg") == "Getformin 2mg plus 500mg"
-    assert voice_name("Panadol 500 milligram") == "Panadol 500 mg"
+    assert voice_name("Getformin 2mg + 500mg") == "گیتفورمین 2mg plus 500mg"
+    assert voice_name("Panadol 500 milligram") == "پانادول 500 mg"
     assert clean_name("x" * 120) is not None, "a 120-char name must survive"
     assert clean_name("x" * 121) is None, "the cap must still reject a paragraph"
     print("guard + voice_name OK")

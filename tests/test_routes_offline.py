@@ -336,7 +336,7 @@ def t_medicine_saved():
         body = response.get_json()
         assert body["success"] is True, body
         assert body["name"] == "Panadol 500mg", body
-        assert body["voice_name"] == "Panadol 500mg", body
+        assert body["voice_name"] == "پانادول 500mg", body
         assert body["status"] == "safe", body
         assert body["expiry_date"] == "2027-03-31", body
         assert body["mfg_date"] is None, body
@@ -395,7 +395,7 @@ def t_medicine_expired():
         body = upload("/detect-medicine").get_json()
         assert body["status"] == "expired", body
         assert body["name"] == "Getformin 2mg + 500mg", body
-        assert body["voice_name"] == "Getformin 2mg plus 500mg", body
+        assert body["voice_name"] == "گیتفورمین 2mg plus 500mg", body
         assert db.get_item(body["id"])["status"] == "expired"
     finally:
         restore()
