@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 nigah.db
 __pycache__/
 *.pyc
