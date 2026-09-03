@@ -55,7 +55,17 @@ MEDICINE_PROMPT = (
     "labels a date as the expiry (words such as EXP, Expiry, Expiry Date, Use "
     "Before, Best Before). Never treat batch numbers, lot numbers, "
     "manufacturing dates, prices, or unlabeled digits as an expiry date. If no "
-    "clearly labeled expiry date is visible, reply EXPIRY_NOT_VISIBLE."
+    "clearly labeled expiry date is visible, reply EXPIRY_NOT_VISIBLE. "
+    "NEVER guess or fabricate: if the medicine name or a date is blurry, "
+    "unclear, or only partly readable, DO NOT invent letters or digits to "
+    "fill the gap - reply UNCLEAR for an unreadable name, or "
+    "EXPIRY_NOT_VISIBLE for a date you cannot read exactly, instead of null, "
+    "an empty line, or a sentence explaining the problem. Before writing any "
+    "date, verify it digit by digit: a real month (01-12), a day that exists "
+    "in that month, and a plausible four-digit year for a medicine pack on "
+    "sale today (never an impossible year like 1932 or 3027). If the calendar "
+    "date or the year cannot be real, the date is unreadable - reply "
+    "EXPIRY_NOT_VISIBLE."
 )
 
 LABEL_PROMPT = (
@@ -73,7 +83,14 @@ LABEL_PROMPT = (
     "line 1 the expiry date in YYYY-MM-DD format "
     "(or EXPIRY_NOT_VISIBLE if the expiry date is not visible), "
     "line 2 the manufacturing date in YYYY-MM-DD format "
-    "(or MFG_NOT_VISIBLE if the manufacturing date is not visible)."
+    "(or MFG_NOT_VISIBLE if the manufacturing date is not visible). "
+    "NEVER guess or fabricate: if a date is blurry, unclear, or only partly "
+    "readable, DO NOT invent the missing digits - reply EXPIRY_NOT_VISIBLE or "
+    "MFG_NOT_VISIBLE instead. Before writing any date, verify it digit by "
+    "digit: a real month (01-12), a day that exists in that month, and a "
+    "plausible four-digit year for a medicine pack (never an impossible year "
+    "like 1932 or 3027). If the calendar date or the year cannot be real, "
+    "the date is unreadable."
 )
 
 UNCLEAR_ERROR = (
@@ -172,6 +189,12 @@ _WORD_DATE_RE = re.compile(r"^(?:(\d{1,2})[\s,\-/]*)?([A-Za-z]{3,9})\.?[\s,\-/]*
 _MONTH_YEAR_RE = re.compile(r"^(\d{1,2})\s*[-/.]\s*(\d{4})$")
 _YEAR_MONTH_RE = re.compile(r"^(\d{4})\s*[-/.]\s*(\d{1,2})$")
 _BARE_YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
+# A well-formed but impossible date (year 1932, 3027) is what a guess or a
+# misread of tiny print looks like. Real pack dates never fall outside this
+# window, and a hallucinated far-future expiry would be announced as "safe" -
+# the dangerous direction - so an impossible year parses as unreadable.
+_PLAUSIBLE_YEAR_MIN = 2000
+_PLAUSIBLE_YEAR_MAX = 2099
 
 
 def _end_of_month(year, month):
@@ -185,8 +208,18 @@ def parse_date(value, allow_bare_year=False):
     31-12-2027 or "Expiry Date: 2027-03-31", and a date that was genuinely read
     must not be thrown away - it silently downgraded the medicine to "unknown".
     A month-only expiry resolves to the last day of that month, which is how
-    pharmaceutical expiry dating works.
+    pharmaceutical expiry dating works. A date whose year cannot belong to a
+    real medicine pack is refused as unreadable rather than saved.
     """
+    parsed = _parse_printed_date(value, allow_bare_year)
+    if parsed is not None and not (
+        _PLAUSIBLE_YEAR_MIN <= parsed.year <= _PLAUSIBLE_YEAR_MAX
+    ):
+        return None
+    return parsed
+
+
+def _parse_printed_date(value, allow_bare_year=False):
     text = (value or "").strip()
     if not text:
         return None

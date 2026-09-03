@@ -200,6 +200,20 @@ def t_bare_year():
     assert parse_date("1234", allow_bare_year=True) is None
 
 
+@check("medicine: an impossible year is refused, not saved as a false expiry")
+def t_implausible_year_refused():
+    # Well-formed but impossible dates are what a guess on blurry print looks
+    # like; a far-future one would be spoken as "safe" - the dangerous
+    # direction - so it must parse as unreadable.
+    for bogus in ("31-12-1932", "03/3027", "15 Mar 1527"):
+        assert parse_date(bogus) is None, bogus
+    assert parse_date("1932", allow_bare_year=True) is None
+    assert parse_date("2020-01-01") == date(2020, 1, 1), "a real past expiry must still parse"
+    parsed, kind = read_date_line("EXP: 31-12-1932")
+    assert (parsed, kind) == (None, "plain"), (parsed, kind)
+    assert read_dates(["EXP: 31-12-1932"]) == (None, None)
+
+
 @check("medicine: a manufacturing date is never mistaken for the expiry")
 def t_mfg_is_not_expiry():
     # The dangerous failure: reporting a safe medicine as "Khatra! Expired".

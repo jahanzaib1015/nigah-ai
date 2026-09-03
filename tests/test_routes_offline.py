@@ -401,6 +401,27 @@ def t_medicine_expired():
         restore()
 
 
+@check("medicine: a well-formed but impossible expiry is not saved as safe")
+def t_medicine_implausible_date():
+    reset_db()
+    # The name was read; the date is a guess (no pack expires in 3027). The
+    # medicine is still saved, but with no expiry -> status unknown, so the
+    # user is asked to scan the label instead of trusting a false date.
+    restore = install(Stub(reply="Panadol 500mg\n03/3027"))
+    try:
+        body = upload("/detect-medicine").get_json()
+        assert body["success"] is True, body
+        assert body["name"] == "Panadol 500mg", body
+        assert body["expiry_date"] is None, body
+        assert body["status"] == "unknown", body
+
+        row = db.get_item(body["id"])
+        assert row["expiry_date"] is None, row
+        assert row["status"] == "unknown", row
+    finally:
+        restore()
+
+
 @check("medicine: a reply with no usable name is refused and not saved")
 def t_medicine_name_guard():
     reset_db()
@@ -501,6 +522,34 @@ def t_label_scan_keeps_expiry():
     assert row["expiry_date"] == "2027-03-31", "stored expiry must survive"
     assert row["status"] == "safe", row
     assert row["mfg_date"] == "2024-01-15", row
+
+
+@check("label scan: an impossible expiry is refused and cannot corrupt the row")
+def t_label_scan_implausible_date():
+    reset_db()
+    restore = install(Stub(reply="Panadol 500mg\n2027-03-31"))
+    try:
+        item_id = upload("/detect-medicine").get_json()["id"]
+    finally:
+        restore()
+
+    # A guessed "EXP: 31-12-1932" must not replace the stored real expiry.
+    restore = install(Stub(reply="EXP: 31-12-1932\n2024-01-15"))
+    try:
+        body = upload(
+            "/detect-medicine", extra={"scan_type": "label", "item_id": str(item_id)}
+        ).get_json()
+        assert body["success"] is True, body
+        assert body["expiry_date"] is None, body
+        assert body["mfg_date"] == "2024-01-15", body
+        assert body["status"] is None, body
+    finally:
+        restore()
+
+    row = db.get_item(item_id)
+    assert row["expiry_date"] == "2027-03-31", "the stored expiry must survive a guessed date"
+    assert row["mfg_date"] == "2024-01-15", row
+    assert row["status"] == "safe", row
 
 
 @check("label scan: no usable dates is a refusal, not a silent success")
